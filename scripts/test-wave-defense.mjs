@@ -224,10 +224,38 @@ export class FactorioServer {
     await this.command(`/c remote.call("wde_test_settings","set",{${entries}})`);
   }
 
-  async generate({ difficulty = 'normal', infinite = false, mapSeed = seed, forcePreview = true } = {}) {
+  async generate({ difficulty = 'normal', infinite = false, mapSeed = seed, forcePreview = true, probeTerrain = false } = {}) {
     const preview = forcePreview ? '; storage.wave_defense.surface.request_to_generate_chunks({0,0},10); storage.wave_defense.surface.force_generate_chunk_requests()' : '';
     await this.command(`/c storage.wave_defense.difficulty=storage.wave_defense.config.difficulties[${lua(difficulty)}]; storage.wave_defense.config.infinite=${lua(infinite)}; create_battle_surface(${mapSeed})${preview}`);
-    return this.snapshot();
+    const snapshot = await this.snapshot();
+    return probeTerrain ? { ...snapshot, ...await this.vegetationSnapshot() } : snapshot;
+  }
+
+  async vegetationSnapshot() {
+    // Probe applied map settings on an untouched surface, outside the stock
+    // scenario's base cleanup. Native tree placement can vary slightly between
+    // generations, so hashes are evidence, not a tree reproducibility assertion.
+    return this.evaluate('result', `
+      local s=game.create_surface('wde-terrain-probe',storage.wave_defense.surface.map_gen_settings)
+      s.request_to_generate_chunks({0,0},16); s.force_generate_chunk_requests()
+      local function entity_layout(entity_type)
+        local entities={}
+        for _,entity in pairs(s.find_entities_filtered{type=entity_type,area={{-512,-512},{512,512}}}) do
+          local p=entity.position
+          local orientation=entity_type=='cliff' and entity.cliff_orientation or ''
+          entities[#entities+1]=entity.name..':'..p.x..','..p.y..':'..orientation
+        end
+        table.sort(entities)
+        local h=0
+        for _,entity in ipairs(entities) do
+          for i=1,#entity do h=(h*31+string.byte(entity,i))%2147483647 end
+          h=(h*31+10)%2147483647
+        end
+        return {count=#entities,hash=h}
+      end
+      local result={trees=entity_layout('tree'),cliffs=entity_layout('cliff')}
+      game.delete_surface(s)
+    `.replaceAll('\n', ' '));
   }
 
   async snapshot() {
@@ -380,6 +408,50 @@ export async function runIntegrationTests() {
         assert.equal(restored.pending, false);
       }
     });
+    await check('tree coverage and cliff density change generated entities independently in both map types', async () => {
+      const terrainEvidence = [];
+      for (const infinite of [false, true]) {
+        await enhanced.settings({ 'wde-water-amount': 100, 'wde-tree-coverage': 100, 'wde-cliff-density': 100, 'wde-starting-area-mode': 'difficulty', 'wde-resource-preset': 'wave-defense' });
+        const native = await enhanced.generate({ infinite, probeTerrain: true });
+        const { trees, cliffs, ...nativeTerrain } = native;
+        const evidence = { infinite, seed, area: [[-512, -512], [512, 512]], trees: { 100: trees }, cliffs: { 100: cliffs } };
+        for (const [setting, option, entityType] of [
+          ['wde-tree-coverage', 'tree_coverage', 'trees'],
+          ['wde-cliff-density', 'cliff_density', 'cliffs'],
+        ]) {
+          assert.ok(native[entityType].count > 0, `native ${infinite ? 'infinite' : 'island'} terrain has ${entityType}`);
+          for (const amount of [0, 600]) {
+            await enhanced.settings({ [setting]: amount });
+            const actual = await enhanced.generate({ infinite, probeTerrain: true });
+            evidence[entityType][amount] = actual[entityType];
+            const expectedSettings = structuredClone(native.settings);
+            // The engine serializes these controls as single-precision floats.
+            if (entityType === 'trees') {
+              expectedSettings.autoplace_controls.trees.size = Math.fround(native.settings.autoplace_controls.trees.size * amount / 100);
+            } else {
+              expectedSettings.cliff_settings.richness = Math.fround(native.settings.cliff_settings.richness * amount / 100);
+            }
+            assert.deepEqual(actual.settings, expectedSettings, `${setting} only changes its own native control`);
+            assert.deepEqual(actual.water, native.water, `${setting} preserves generated water`);
+            assertDefenses(actual);
+            const status = await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")');
+            assert.equal(status.applied.options[option], amount / 100);
+            assert.equal(status.pending, false);
+          }
+          assert.equal(evidence[entityType][0].count, 0, `zero ${setting} removes generated ${entityType}`);
+          assert.ok(evidence[entityType][600].count > native[entityType].count, `higher ${setting} produces more ${entityType}: ${JSON.stringify(evidence)}`);
+          assert.notEqual(evidence[entityType][600].hash, native[entityType].hash, `higher ${setting} changes the entity layout`);
+          await enhanced.settings({ [setting]: 100 });
+          assert.deepEqual(await enhanced.generate({ infinite }), nativeTerrain, `restoring ${setting} to 100% restores exact native terrain and settings`);
+          const restored = await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")');
+          assert.equal(restored.applied.options[option], undefined, `default ${setting} does not add an applied override`);
+          assert.equal(restored.pending, false);
+        }
+        terrainEvidence.push(evidence);
+        console.log(`Tree and cliff evidence ${JSON.stringify(evidence)}`);
+        writeFileSync(path.join(runRoot, 'terrain-evidence.json'), JSON.stringify(terrainEvidence, null, 2));
+      }
+    });
     await check('custom resource controls keep native values and unrelated map settings', async () => {
       const values = { 'wde-resource-preset': 'custom' };
       for (const [index, resource] of resources.entries()) {
@@ -442,10 +514,10 @@ export async function runIntegrationTests() {
       }
     });
     await check('settings remain pending until regeneration, including during a round', async () => {
-      await enhanced.settings({ 'wde-starting-area-size': 100, 'wde-water-amount': 100 });
+      await enhanced.settings({ 'wde-starting-area-size': 100, 'wde-water-amount': 100, 'wde-tree-coverage': 100, 'wde-cliff-density': 100 });
       const before = await enhanced.generate();
       await enhanced.command('/c start_round()');
-      await enhanced.settings({ 'wde-starting-area-size': 225, 'wde-resource-preset': 'freeplay', 'wde-water-amount': 25 });
+      await enhanced.settings({ 'wde-starting-area-size': 225, 'wde-resource-preset': 'freeplay', 'wde-water-amount': 25, 'wde-tree-coverage': 50, 'wde-cliff-density': 300 });
       assert.deepEqual(await enhanced.snapshot(), before);
       const pending = await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")');
       assert.equal(pending.pending, true);
@@ -453,6 +525,10 @@ export async function runIntegrationTests() {
       assert.equal(pending.next_options.starting_area, 2.25);
       assert.equal(pending.applied.options.water_amount, undefined);
       assert.equal(pending.next_options.water_amount, 0.25);
+      assert.equal(pending.applied.options.tree_coverage, undefined);
+      assert.equal(pending.next_options.tree_coverage, 0.5);
+      assert.equal(pending.applied.options.cliff_density, undefined);
+      assert.equal(pending.next_options.cliff_density, 3);
       await enhanced.command('/c restart_round(); storage.wave_defense.surface.request_to_generate_chunks({0,0},10); storage.wave_defense.surface.force_generate_chunk_requests()');
       const restarted = await enhanced.snapshot();
       assert.equal(restarted.settings.starting_area, 2.25);
@@ -460,6 +536,8 @@ export async function runIntegrationTests() {
       const applied = await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")');
       assert.equal(applied.pending, false);
       assert.equal(applied.applied.options.water_amount, 0.25);
+      assert.equal(applied.applied.options.tree_coverage, 0.5);
+      assert.equal(applied.applied.options.cliff_density, 3);
       assertDefenses(restarted);
     });
     await check('same seed and configuration reproduce resources and defense layout', async () => {
@@ -471,6 +549,8 @@ export async function runIntegrationTests() {
       const before = await enhanced.snapshot();
       const beforeStatus = await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")');
       assert.equal(beforeStatus.applied.options.water_amount, 0.25);
+      assert.equal(beforeStatus.applied.options.tree_coverage, 0.5);
+      assert.equal(beforeStatus.applied.options.cliff_density, 3);
       const save = path.join(enhanced.directory, 'user-data', 'saves', 'wde-integration.zip');
       await enhanced.command('/server-save wde-integration');
       const deadline = Date.now() + 30_000;
@@ -486,7 +566,7 @@ export async function runIntegrationTests() {
       assert.deepEqual(regenerated, before);
     });
     await check('native wave spawning finds spawners at every supported base size and map type', async () => {
-      await enhanced.settings({ 'wde-starting-area-mode': 'custom', 'wde-resource-preset': 'wave-defense', 'wde-water-amount': 100 });
+      await enhanced.settings({ 'wde-starting-area-mode': 'custom', 'wde-resource-preset': 'wave-defense', 'wde-water-amount': 100, 'wde-tree-coverage': 100, 'wde-cliff-density': 100 });
       // A headless server has no connected players, so native wave power is zero.
       // Temporarily make one unit free in this disposable scenario. The stock loop
       // exits after that purchase, exercising real spawn/path/attack code unchanged.
@@ -526,7 +606,7 @@ export async function runIntegrationTests() {
     await freeplay.start();
     await check('ordinary Freeplay and similarly named surfaces keep their generation settings', async () => {
       const before = await freeplay.evaluate('game.surfaces.nauvis.map_gen_settings');
-      await freeplay.settings({ 'wde-resource-preset': 'freeplay', 'wde-iron-ore-enabled': false, 'wde-starting-area-mode': 'custom', 'wde-starting-area-size': 300, 'wde-water-amount': 400 });
+      await freeplay.settings({ 'wde-resource-preset': 'freeplay', 'wde-iron-ore-enabled': false, 'wde-starting-area-mode': 'custom', 'wde-starting-area-size': 300, 'wde-water-amount': 400, 'wde-tree-coverage': 0, 'wde-cliff-density': 600 });
       assert.deepEqual(await freeplay.evaluate('game.surfaces.nauvis.map_gen_settings'), before);
       const surfaces = await freeplay.evaluate('{reference=reference.map_gen_settings,actual=s.map_gen_settings}', 'local reference=game.create_surface("Water control reference",{seed=123,starting_area=1.25,autoplace_controls={["iron-ore"]={frequency=2,size=3,richness=4}}}); local s=game.create_surface("Surface 42",reference.map_gen_settings);');
       assert.deepEqual(surfaces.actual, surfaces.reference, 'all generation settings stay native outside Wave Defense');

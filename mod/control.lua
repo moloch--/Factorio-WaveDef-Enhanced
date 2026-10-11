@@ -232,6 +232,11 @@ commands.add_command("wde-status", { "wave-defense-enhanced.command-help" }, fun
       { "string-mod-setting.wde-resource-preset-" .. applied.options.preset },
     })
     reply({ "wave-defense-enhanced.water-status", (applied.options.water_amount or 1) * 100 })
+    reply({
+      "wave-defense-enhanced.terrain-status",
+      (applied.options.tree_coverage or 1) * 100,
+      (applied.options.cliff_density or 1) * 100,
+    })
   else
     reply({ "wave-defense-enhanced.not-applied" })
   end

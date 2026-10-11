@@ -176,6 +176,7 @@ async function reset() {
   await server.settings({
     'wde-resource-preset': 'wave-defense', 'wde-starting-area-mode': 'difficulty',
     'wde-water-amount': 100, 'wde-starting-area-size': 175,
+    'wde-tree-coverage': 100, 'wde-cliff-density': 100,
     ...Object.fromEntries(['iron-ore', 'copper-ore', 'coal', 'stone', 'uranium-ore', 'crude-oil'].map((resource) => [`wde-${resource}-enabled`, true])),
   });
   await server.generate();
@@ -251,41 +252,58 @@ try {
     assert.equal((await advance(120)).status.generation_count, actual.status.generation_count, 'idle timer does not regenerate again');
   });
 
-  await check('resource, preset, checkbox and starting-area edits share one debounce window', async (before) => {
+  await check('terrain, resource, preset, checkbox and starting-area edits share one debounce window', async (before) => {
     for (const [kind, key, value] of [
       ['preset', undefined, 2], ['field', 'wde-iron-ore-richness', '225'],
+      ['slider', 'wde-tree-coverage', 250], ['field', 'wde-cliff-density', '75'],
       ['enabled', 'coal', false], ['area-mode', undefined, 2], ['slider', 'wde-starting-area-size', 250],
+      ['slider', 'wde-water-amount', 125], ['field', 'wde-tree-coverage', '175.5'],
     ]) {
       await event(kind, key, value);
+      const pending = await snapshot();
+      assert.equal(pending.queue.due_tick, pending.tick + 60);
+      assert.equal(pending.status.generation_count, before.status.generation_count);
       await advance(10);
     }
-    const actual = await flush();
+    let actual = await advance(49);
+    assert.equal(actual.status.generation_count, before.status.generation_count, 'interleaved controls wait for the last edit');
+    actual = await advance(6);
     assert.equal(actual.status.generation_count, before.status.generation_count + 1);
     assert.equal(actual.status.applied.options.preset, 'custom');
     assert.equal(actual.status.applied.options.resources['iron-ore'].richness, 2.25);
     assert.equal(actual.status.applied.options.resources.coal.enabled, false);
     assert.equal(actual.status.applied.starting_area, 2.5);
+    assert.equal(actual.status.applied.options.water_amount, 1.25);
+    assert.equal(actual.status.applied.options.tree_coverage, 1.755);
+    assert.equal(actual.status.applied.options.cliff_density, 0.75);
     assert.equal(actual.start_enabled, true);
+    assert.equal((await advance(120)).status.generation_count, actual.status.generation_count);
   });
 
-  await check('invalid input postpones generation until repaired', async (before) => {
-    await event('field', 'wde-water-amount', '200');
-    await advance(40);
-    await event('field', 'wde-water-amount', '');
-    let actual = await advance(120);
-    assert.equal(actual.status.generation_count, before.status.generation_count);
-    assert.equal(actual.start_enabled, false);
-    assert.equal(actual.validation_visible, true);
-    assert.equal(actual.numbers['wde-water-amount'], '');
-    assert.equal(actual.status.next_options.water_amount, 2);
-    await event('field', 'wde-water-amount', '250');
-    actual = await advance(59);
-    assert.equal(actual.status.generation_count, before.status.generation_count);
-    actual = await advance(6);
-    assert.equal(actual.status.generation_count, before.status.generation_count + 1);
-    assert.equal(actual.status.applied.options.water_amount, 2.5);
-    assert.equal(actual.start_enabled, true);
-  });
+  for (const [setting, option] of [
+    ['wde-water-amount', 'water_amount'],
+    ['wde-tree-coverage', 'tree_coverage'],
+    ['wde-cliff-density', 'cliff_density'],
+  ]) {
+    await check(`invalid ${option} input postpones generation until repaired`, async (before) => {
+      await event('field', setting, '200');
+      await advance(40);
+      await event('field', setting, '');
+      let actual = await advance(120);
+      assert.equal(actual.status.generation_count, before.status.generation_count);
+      assert.equal(actual.start_enabled, false);
+      assert.equal(actual.validation_visible, true);
+      assert.equal(actual.numbers[setting], '');
+      assert.equal(actual.status.next_options[option], 2);
+      await event('field', setting, '250');
+      actual = await advance(59);
+      assert.equal(actual.status.generation_count, before.status.generation_count);
+      actual = await advance(6);
+      assert.equal(actual.status.generation_count, before.status.generation_count + 1);
+      assert.equal(actual.status.applied.options[option], 2.5);
+      assert.equal(actual.start_enabled, true);
+    });
+  }
 
   await check('discarding invalid input schedules the committed setting', async (before) => {
     await event('field', 'wde-water-amount', '225');
@@ -300,13 +318,38 @@ try {
 
   await check('reverting to the applied configuration cancels unnecessary work', async (before) => {
     await event('slider', 'wde-water-amount', 200);
+    await event('slider', 'wde-tree-coverage', 0);
+    await event('slider', 'wde-cliff-density', 600);
     await advance(20);
     await event('slider', 'wde-water-amount', 100);
+    await event('slider', 'wde-tree-coverage', 100);
+    await event('slider', 'wde-cliff-density', 100);
     const actual = await advance(120);
     assert.equal(actual.status.generation_count, before.status.generation_count);
     assert.equal(actual.status.pending, false);
     assert.equal(actual.start_enabled, true);
     assert.equal(actual.queue, undefined);
+  });
+
+  await check('tree and cliff defaults restore through the shared automatic preview', async (before) => {
+    await event('slider', 'wde-tree-coverage', 0);
+    await event('slider', 'wde-cliff-density', 600);
+    const changed = await flush();
+    assert.equal(changed.status.generation_count, before.status.generation_count + 1);
+    assert.equal(changed.status.applied.options.tree_coverage, 0);
+    assert.equal(changed.status.applied.options.cliff_density, 6);
+    await event('field', 'wde-tree-coverage', '100');
+    await advance(20);
+    await event('slider', 'wde-cliff-density', 100);
+    const restored = await flush();
+    assert.equal(restored.status.generation_count, changed.status.generation_count + 1);
+    assert.equal(restored.status.applied.seed, before.status.applied.seed);
+    assert.deepEqual(restored.status.applied.options, before.status.applied.options);
+    assert.equal(restored.numbers['wde-tree-coverage'], '100');
+    assert.equal(restored.numbers['wde-cliff-density'], '100');
+    assert.equal(restored.status.pending, false);
+    assert.equal(restored.start_enabled, true);
+    assert.equal(restored.queue, undefined);
   });
 
   await check('native seed typing uses the same debounce and applies the final seed', async (before) => {
@@ -343,12 +386,16 @@ try {
 
   await check('runtime mod-setting dialog changes regenerate automatically', async (before) => {
     await server.command('/c remote.call("wde_test_preview","setting_event","wde-water-amount",225)');
+    await server.command('/c remote.call("wde_test_preview","setting_event","wde-tree-coverage",175)');
+    await server.command('/c remote.call("wde_test_preview","setting_event","wde-cliff-density",50)');
     let actual = await advance(59);
     assert.equal(actual.status.generation_count, before.status.generation_count);
     assert.equal(actual.start_enabled, false);
     actual = await advance(6);
     assert.equal(actual.status.generation_count, before.status.generation_count + 1);
     assert.equal(actual.status.applied.options.water_amount, 2.25);
+    assert.equal(actual.status.applied.options.tree_coverage, 1.75);
+    assert.equal(actual.status.applied.options.cliff_density, 0.5);
   });
 
   for (const [kind, value] of [['confirm-seed', '123456'], ['shuffle', undefined], ['difficulty', 1], ['infinite', true]]) {
@@ -369,6 +416,8 @@ try {
 
   await check('a queued refresh survives saving and reloading with its remaining delay', async (before) => {
     await event('slider', 'wde-water-amount', 275);
+    await event('slider', 'wde-tree-coverage', 225);
+    await event('slider', 'wde-cliff-density', 150);
     await advance(25);
     const pending = await snapshot();
     const save = path.join(server.directory, 'user-data', 'saves', 'preview-pending.zip');
@@ -387,6 +436,8 @@ try {
     const actual = await flush();
     assert.equal(actual.status.generation_count, before.status.generation_count + 1);
     assert.equal(actual.status.applied.options.water_amount, 2.75);
+    assert.equal(actual.status.applied.options.tree_coverage, 2.25);
+    assert.equal(actual.status.applied.options.cliff_density, 1.5);
     assert.equal(actual.start_enabled, true);
   });
 

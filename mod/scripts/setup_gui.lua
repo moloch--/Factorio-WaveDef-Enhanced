@@ -280,20 +280,18 @@ local function build(player, native, previous, sizes)
   saved.area_hint = label(controls, "difficulty-area")
   saved.area_hint.style.single_line = false
   saved.area_hint.style.maximal_width = sizes.controls - 40
-  local water_flow = controls.add({ type = "flow", direction = "horizontal" })
-  water_flow.style.vertical_align = "center"
-  water_flow.style.horizontal_spacing = 12
-  label(water_flow, "water-amount").tooltip = { "wde-setup.water-help" }
-  add_number(
-    water_flow,
-    saved,
-    "wde-water-amount",
-    0,
-    600,
-    { kind = "water-amount", setting = "wde-water-amount" },
-    200
-  )
-  saved.numbers["wde-water-amount"].slider.tooltip = { "wde-setup.water-help" }
+  for _, control in ipairs(config.terrain_controls) do
+    local terrain_flow = controls.add({ type = "flow", direction = "horizontal" })
+    terrain_flow.style.vertical_align = "center"
+    terrain_flow.style.horizontal_spacing = 12
+    local tooltip = { "wde-setup." .. control.name .. "-help" }
+    local terrain_label = label(terrain_flow, control.name)
+    terrain_label.tooltip = tooltip
+    terrain_label.style.width = 110
+    local setting = "wde-" .. control.name
+    add_number(terrain_flow, saved, setting, 0, 600, { kind = "terrain", setting = setting }, 200)
+    saved.numbers[setting].slider.tooltip = tooltip
+  end
   saved.read_only = label(controls, "read-only")
   saved.read_only.style.single_line = false
   saved.read_only.style.maximal_width = sizes.controls - 40
@@ -388,7 +386,9 @@ local function sync(player, saved, current)
     settings.global["wde-starting-area-size"].value,
     player.admin and options.starting_area_mode == "custom"
   )
-  sync_number(saved, "wde-water-amount", (options.water_amount or 1) * 100, player.admin)
+  for _, control in ipairs(config.terrain_controls) do
+    sync_number(saved, "wde-" .. control.name, (options[control.option] or 1) * 100, player.admin)
+  end
   saved.area_hint.visible = options.starting_area_mode == "difficulty"
   saved.read_only.visible = not player.admin
   local invalid = next(saved.invalid) ~= nil
@@ -419,6 +419,8 @@ local function refresh_player(player, current)
       not saved
       or not valid(saved.body)
       or not saved.numbers["wde-water-amount"]
+      or not saved.numbers["wde-tree-coverage"]
+      or not saved.numbers["wde-cliff-density"]
       or saved.native.frame ~= native.frame
       or saved.sizes.controls ~= sizes.controls
       or saved.sizes.preview ~= sizes.preview
@@ -622,7 +624,7 @@ function gui.handle_event(event, context)
   local tags = element.tags
   local kind = tags.kind
   local options = context.status().next_options
-  if kind == "resource" or kind == "area-size" or kind == "water-amount" then
+  if kind == "resource" or kind == "area-size" or kind == "terrain" then
     local pair = saved.numbers[tags.setting]
     if not pair or (element ~= pair.slider and element ~= pair.field) then
       return false

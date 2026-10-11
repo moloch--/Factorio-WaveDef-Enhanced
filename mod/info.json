@@ -1,9 +1,9 @@
 {
   "name": "wave-defense-enhanced",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "title": "Wave Defense Enhanced",
   "author": "Joe (moloch--)",
   "factorio_version": "2.0",
   "dependencies": ["base >= 2.0.77"],
-  "description": "Resource, starting-area, and water controls for Wave Defense. Includes an Enhanced scenario using the original gameplay with automatic, debounced map previews."
+  "description": "Resource, starting-area, water, tree, and cliff controls for Wave Defense. Includes an Enhanced scenario using the original gameplay with automatic, debounced map previews."
 }

@@ -1,4 +1,15 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.6.0
+Date: 2026-10-11
+  Features:
+    - Add Tree coverage and Cliff density sliders and percentage fields under Starting area, ranging from 0% to 600%.
+    - Preserve the scenario's original trees and cliffs at 100%; disable either feature at 0%.
+    - Share the existing one-second preview debounce across terrain, resource, starting-area, and seed edits.
+    - Report applied tree coverage and cliff density with /wde-status.
+  Info:
+    - Tree coverage adjusts forest size; cliff density fills gaps along the existing cliff contours without changing their elevation or spacing.
+    - Terrain controls are independent of resource presets and starting-area mode. Active rounds remain unchanged until the next generation.
+---------------------------------------------------------------------------------------------------
 Version: 0.5.0
 Date: 2026-10-11
   Features:

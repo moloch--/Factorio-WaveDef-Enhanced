@@ -26,16 +26,19 @@ local prototypes = {
     maximum_value = 300,
     order = "b[starting-area]-b[size]",
   },
-  {
+}
+
+for index, control in ipairs(config.terrain_controls) do
+  prototypes[#prototypes + 1] = {
     type = "double-setting",
-    name = "wde-water-amount",
+    name = "wde-" .. control.name,
     setting_type = "runtime-global",
     default_value = 100,
     minimum_value = 0,
     maximum_value = 600,
-    order = "b[starting-area]-c[water]",
-  },
-}
+    order = "b[starting-area]-c[terrain]-" .. index,
+  }
+end
 
 local dimensions = { "frequency", "size", "richness" }
 for index, name in ipairs(config.resource_names) do

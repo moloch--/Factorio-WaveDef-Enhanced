@@ -1,7 +1,7 @@
 # Factorio Wave Defense Enhanced
 
-**Version 0.5.0:** resource, starting-area, and water controls with automatic
-map previews, targeting **Factorio 2.0.77**. The **Wave Defense Enhanced** scenario
+**Version 0.6.0:** resource, starting-area, water, tree, and cliff controls with
+automatic map previews, targeting **Factorio 2.0.77**. The **Wave Defense Enhanced** scenario
 loads the game's original Wave Defense logic, which still handles waves,
 difficulty, upgrades, victory, and defenses.
 
@@ -30,7 +30,11 @@ folder, enable it, and choose the **Wave Defense Enhanced** scenario.
 4. Set **Water amount** under **Starting area**. **100%** preserves the original
    terrain, lower values give more land, and higher values give more water.
    **0%** removes all water. This setting works with either starting-area mode.
-5. The preview updates automatically about **one second after the last edit**.
+5. Set **Tree coverage** and **Cliff density** below water. **100%** preserves
+   the original forests and cliffs; **0%** disables the selected feature.
+   Higher tree coverage grows forests, while higher cliff density fills more
+   gaps along cliff lines. Both accept **0%-600%**, including decimals.
+6. The preview updates automatically about **one second after the last edit**.
    Dragging sliders or typing repeatedly restarts that delay; invalid entries
    hold the preview until corrected or discarded. Seed edits use the same delay.
    **Enter** in the seed field updates immediately; **Shuffle** chooses a new
@@ -81,6 +85,16 @@ stock terrain. Increasing water preserves the immediate spawn area and gradually
 applies the adjustment farther out. **0%** removes lakes and the island ocean,
 leaving no water for offshore pumps. Higher water can change shorelines, defense
 placement, resource deposits, and enemy routes; use the preview to choose a map.
+
+Tree coverage and cliff density also accept **0%-600%**, independently of
+resource presets and starting-area mode. Their percentages are relative to
+Wave Defense's sparse native forests and cliffs. Tree coverage adjusts forest
+size while preserving tree frequency and health. Cliff density adjusts continuity
+along the original elevation contours, keeping their elevation and spacing.
+At **0%**, the selected feature does not generate; **100%** preserves the native
+generation settings. Higher values can add obstacles outside the area the
+scenario clears for the starting base. These controls share the same debounce
+timer as water, resources, starting area, and seed edits.
 
 The original scenario places walls and gates around the selected base size,
 with turrets inside. Perimeters change in chunk-sized steps; nearby percentage
@@ -192,8 +206,8 @@ private servers bind to localhost and retain results under `.dev/wave-tests/`.
 They do not verify interactive debugger breakpoints or real multiplayer clients.
 The suite compares default maps against an unmodded server and exercises actual
 resource entities, terrain-clipped defenses, pending settings, restart, save/load,
-and wave attack groups. Its disposable mod copies include a test-only settings
-writer. Because an empty server has zero native wave power, wave tests make the
+trees, cliffs, and wave attack groups. Its disposable mod copies include a
+test-only settings writer. Because an empty server has zero native wave power, wave tests make the
 small-biter price zero only in that test save; native spawner selection, pathing,
 and attack commands still run. For stock-size bases the clientless test also
 generates the native preview's 320-tile extent, since no minimap is open. At 300%
@@ -221,7 +235,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 Packag
 ```
 
 Packaging validates first, then writes
-`dist/wave-defense-enhanced_0.5.0.zip` with the required mod folder inside it.
+`dist/wave-defense-enhanced_0.6.0.zip` with the required mod folder inside it.
 Only files from `mod/` are packaged. Rebuilding replaces that version's local
 archive. Increment `mod/info.json` and add a `mod/changelog.txt` entry when
 preparing a new version.
@@ -247,8 +261,8 @@ For a public release:
    For the current version:
 
    ```powershell
-   git tag v0.5.0
-   git push origin v0.5.0
+   git tag v0.6.0
+   git push origin v0.6.0
    ```
 
 3. Actions creates a GitHub Release with generated notes and the installable mod
@@ -294,12 +308,15 @@ loads. Applied configuration snapshots persist across save/load.
 The mod recognizes `script.level` as `base/wave-defense` or the shipped Enhanced
 scenario, checks the scenario's remote interface, and handles its newly created `Surface N` before any chunks
 exist. It updates resource autoplace controls and, when requested, starting
-area and water coverage. Enemy settings and the choice of island/infinite
-generator stay under the original scenario's control. Non-default water wraps
+area, water coverage, tree coverage, and cliff density. Enemy settings and the
+choice of island/infinite generator stay under the original scenario's control. Non-default water wraps
 that generator's elevation with a small logarithmic sea-level adjustment;
 increased water fades in between 32 and 96 tiles from spawn. Zero water clamps
 elevation above water level. The stock island generator cancels Factorio's
 ordinary water-size adjustment, so simply setting that control would not work.
+Tree coverage scales the native tree autoplace size, and cliff density scales
+native cliff richness (continuity). All three terrain overrides are omitted
+at 100%, preserving default seeds and applied snapshots from older saves.
 
 Factorio raises `on_surface_created` synchronously. The stock scenario then
 queries the updated starting-area radius before generating chunks and placing

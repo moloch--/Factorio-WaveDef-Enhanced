@@ -1,6 +1,11 @@
 local config = {}
 
 config.resource_names = { "iron-ore", "copper-ore", "coal", "stone", "uranium-ore", "crude-oil" }
+config.terrain_controls = {
+  { name = "water-amount", option = "water_amount" },
+  { name = "tree-coverage", option = "tree_coverage" },
+  { name = "cliff-density", option = "cliff_density" },
+}
 config.wave_defense_defaults = {
   ["iron-ore"] = { frequency = 1, size = 2, richness = 2 },
   ["copper-ore"] = { frequency = 1, size = 2, richness = 2 },
@@ -65,11 +70,13 @@ function config.read(global_settings)
     options.starting_area = percentage(global_settings, "wde-starting-area-size", 175, 100, 300)
   end
 
-  local water_amount = percentage(global_settings, "wde-water-amount", 100, 0, 600)
-  -- Omit the default override so older applied snapshots still compare equal
+  -- Omit default overrides so older applied snapshots still compare equal
   -- and the scenario's original terrain settings remain untouched at 100%.
-  if water_amount ~= 1 then
-    options.water_amount = water_amount
+  for _, control in ipairs(config.terrain_controls) do
+    local value = percentage(global_settings, "wde-" .. control.name, 100, 0, 600)
+    if value ~= 1 then
+      options[control.option] = value
+    end
   end
 
   for _, name in ipairs(config.resource_names) do
@@ -109,6 +116,20 @@ function config.apply(map_gen_settings, options)
 
   if options.starting_area ~= nil then
     result.starting_area = options.starting_area
+  end
+
+  if options.tree_coverage ~= nil then
+    local trees = result.autoplace_controls.trees or {}
+    trees.size = (trees.size or 1) * options.tree_coverage
+    result.autoplace_controls.trees = trees
+  end
+
+  if options.cliff_density ~= nil then
+    local cliffs = result.cliff_settings or {}
+    -- Richness fills gaps along the existing elevation contours. Keep their
+    -- spacing and starting elevation intact while changing cliff density.
+    cliffs.richness = (cliffs.richness or 1) * options.cliff_density
+    result.cliff_settings = cliffs
   end
 
   if options.water_amount ~= nil then
