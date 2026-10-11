@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('Setup', 'Validate', 'Format', 'Test', 'Package', 'Run')]
+    [ValidateSet('Setup', 'Validate', 'Format', 'Test', 'TestWaveDefense', 'Package', 'Run', 'RunWaveDefense')]
     [string]$Action = 'Validate',
     [string]$FactorioPath,
     [ValidateRange(1, 1000000)]
@@ -127,7 +127,7 @@ function Ensure-Profile {
         New-Item -ItemType Junction -Path $link -Target $modRoot | Out-Null
     }
     # Only this repository's isolated mod profile is managed here.
-    $mods = @{mods = @(@{name = 'base'; enabled = $true}, @{name = $info.name; enabled = $true})}
+    $mods = @{mods = @(@{name = 'base'; enabled = $true}, @{name = $info.name; enabled = $true}, @{name = 'space-age'; enabled = $false}, @{name = 'quality'; enabled = $false}, @{name = 'elevated-rails'; enabled = $false})}
     Write-Utf8 (Join-Path $devRoot 'mods/mod-list.json') ($mods | ConvertTo-Json -Depth 5)
     $editorFile = Join-Path $repoRoot '.vscode/settings.json'
     if (-not (Test-Path -LiteralPath $editorFile)) {
@@ -226,5 +226,27 @@ switch ($Action) {
         Ensure-Profile
         # Run is an explicit request to open the interactive game.
         Start-Process -FilePath $script:factorioExe -ArgumentList "--config `"$configFile`" --mod-directory `"$(Join-Path $devRoot 'mods')`""
+    }
+    'RunWaveDefense' {
+        Ensure-Profile
+        Start-Process -FilePath $script:factorioExe -ArgumentList "--config `"$configFile`" --mod-directory `"$(Join-Path $devRoot 'mods')`" --load-scenario base/wave-defense"
+    }
+    'TestWaveDefense' {
+        Validate-Mod
+        Ensure-Profile
+        $node = Get-Command node -ErrorAction SilentlyContinue
+        $oldElectronMode = $env:ELECTRON_RUN_AS_NODE
+        try {
+            if ($node) {
+                $runtime = $node.Source
+            } else {
+                # VS Code includes a suitable Node runtime, also used by setup-editor.ps1.
+                $runtime = @("$env:ProgramFiles\Microsoft VS Code\Code.exe", "$env:LOCALAPPDATA\Programs\Microsoft VS Code\Code.exe") | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+                if (-not $runtime) { throw 'Install Node.js 22+ or VS Code to run the scenario tests.' }
+                $env:ELECTRON_RUN_AS_NODE = '1'
+            }
+            & $runtime (Join-Path $PSScriptRoot 'test-wave-defense.mjs') | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw 'Wave Defense integration tests failed. See .dev/wave-tests for logs.' }
+        } finally { $env:ELECTRON_RUN_AS_NODE = $oldElectronMode }
     }
 }

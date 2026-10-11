@@ -1,9 +1,9 @@
 {
   "name": "wave-defense-enhanced",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "title": "Wave Defense Enhanced",
   "author": "Joe (moloch--)",
   "factorio_version": "2.0",
   "dependencies": ["base >= 2.0.77"],
-  "description": "A fresh development scaffold for Wave Defense Enhanced. Wave gameplay is not implemented yet."
+  "description": "Resource frequency, size, richness, and configurable starting areas with scaled walls and turrets for the built-in Wave Defense scenario."
 }

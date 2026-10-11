@@ -1,4 +1,13 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.0
+Date: 2026-10-11
+  Features:
+    - Add resource presets, enable switches, and custom frequency, size, and richness for six Nauvis resources.
+    - Add configurable starting areas with the built-in scenario's scaled walls, gates, and turrets.
+    - Apply settings to newly created battle maps in the original Wave Defense mode.
+    - Show applied and pending settings with /wde-status.
+    - Generate an outer chunk margin for large custom bases so waves can find enemy spawners.
+---------------------------------------------------------------------------------------------------
 Version: 0.1.0
 Date: 2026-10-11
   Features:

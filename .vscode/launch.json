@@ -2,14 +2,14 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Factorio: Debug local mod (2.0)",
+      "name": "Factorio: Debug Wave Defense (2.0)",
       "type": "factoriomod",
       "request": "launch",
       "preLaunchTask": "Factorio: Setup",
       "modsPath": "${workspaceFolder}/.dev/mods",
       "adjustMods": {"wave-defense-enhanced": true},
       "disableExtraMods": true,
-      "factorioArgs": ["--disable-audio"]
+      "factorioArgs": ["--disable-audio", "--load-scenario", "base/wave-defense"]
     }
   ]
 }

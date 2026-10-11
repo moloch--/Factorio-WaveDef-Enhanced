@@ -1,10 +1,72 @@
 # Factorio Wave Defense Enhanced
 
-A fresh mod development scaffold for **Factorio 2.0**, configured and tested with
-**Factorio 2.0.77 on Windows**. Wave gameplay is not implemented yet.
+**Version 0.2.0:** resource controls and configurable starting areas for the
+**built-in Wave Defense scenario**, targeting **Factorio 2.0.77**. The original
+scenario still handles waves, difficulty, upgrades, victory, and defenses.
 
-The mod currently initializes persistent state and provides `/wde-status` to
-confirm it is running. Source files live in `mod/`.
+## Play
+
+From this repository's PowerShell terminal:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 RunWaveDefense
+```
+
+This opens vanilla Wave Defense in the isolated development profile with the mod
+enabled. Alternatively, install the release ZIP into your Factorio mods folder,
+enable it, and choose the built-in **Wave Defense** scenario.
+
+1. Before starting the round, open **Settings > Mod settings > Map**.
+2. Choose a resource preset: **Wave Defense defaults**, **Freeplay resource
+   defaults**, or **Custom**. Custom uses the frequency, size, and richness
+   percentage values for iron, copper, coal, stone, uranium, and crude oil.
+3. Set starting area to **Follow difficulty** or **Custom**, with a custom
+   percentage. Resource enable switches work with every resource preset.
+4. Return to the Wave Defense preview. Press **Enter** in the seed field to
+   regenerate with the same seed, or use **Shuffle** for a new seed. Then start
+   the round. `/wde-status` reports the applied settings and pending changes.
+
+Settings are shared map settings; multiplayer admins control them. Edits during
+an active round remain pending until the next native preview regeneration or
+round restart. Installing into an existing game does not rebuild its current
+map. The mod does not change ordinary Freeplay or other scenarios.
+
+## Settings and balance
+
+Custom resource controls accept **1%-600%**; 100% is the native Freeplay
+multiplier. Use each resource's enabled checkbox to turn generation off.
+Frequency generally changes deposit count, size changes deposit size, and
+richness changes ore quantity or oil yield. With the same game version and
+settings, a fixed seed is reproducible; individual deposit counts do not
+necessarily change monotonically.
+
+The default preset preserves these stock Wave Defense multipliers:
+
+| Resource | Frequency | Size | Richness |
+| --- | ---: | ---: | ---: |
+| Iron, copper, coal, stone | 100% | 200% | 200% |
+| Crude oil | 200% | 200% | 200% |
+| Uranium | 300% | 50% | 200% |
+
+Starting area follows difficulty by default: **Easy 225%, Normal 175%, Hard
+150%**. Custom area overrides this value independently of combat difficulty.
+Its available range is **100%-300%**, and affects the enemy-free area together
+with the scenario's starting perimeter. It does not change total map size.
+
+The original scenario places walls and gates around the selected base size,
+with turrets inside. Perimeters change in chunk-sized steps; nearby percentage
+values can produce the same wall dimensions. Turret spacing and **50 firearm
+magazines per turret** remain stock, so larger bases receive more turrets and
+more total ammunition. Native terrain clipping and footprint clearing still
+apply. For custom areas above 225%, the mod also queues surrounding chunks
+beyond the enemy-free radius so native waves can find spawners. Larger areas
+therefore take more terrain generation work. Disabling essential resources can
+make a round unwinnable.
+
+This milestone uses the existing preview regeneration controls. It does not add
+a separate map-settings GUI, resize an existing battle map, change turret
+density, or support custom resources or overhaul mods that remove vanilla
+resource controls.
 
 ## Start developing
 
@@ -24,8 +86,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 Valida
 # Create a map, reload it, and run 600 ticks in the actual Factorio engine.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 Test
 
-# Open the game with the development mod enabled.
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 Run
+# Exercise the actual vanilla Wave Defense scenario with private local servers.
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 TestWaveDefense
 ```
 
 Setup has already been completed on this computer. A separate standalone Lua
@@ -43,13 +105,13 @@ in `.dev/local.json`. Rerun editor setup after changing the game installation.
 - **Ctrl+Shift+B** runs validation. Formatting happens when saving Lua files.
 - In the command palette, run **Factorio: Select Version** and select the
   configured Factorio 2.0.77 installation on first use.
-- Press **F5** with **Factorio: Debug local mod (2.0)** selected. Create a freeplay
-  game or load a development save, then enter `/wde-status` in the console.
+- Press **F5** with **Factorio: Debug Wave Defense (2.0)** selected. This opens
+  the built-in scenario; enter `/wde-status` in the console.
 - Set a breakpoint inside `commands.add_command` in `mod/control.lua`, then run
   `/wde-status` to exercise it. The Lua language server may ask once to trust its
   locally generated Factorio API plugin.
-- Use **Terminal > Run Task** for Setup, Validate, Format, Smoke test, Package,
-  or Play.
+- Use **Terminal > Run Task** for Setup, Validate, Format, Smoke test, Test Wave
+  Defense, Package, or Play Wave Defense.
 
 Installed tools:
 
@@ -75,7 +137,8 @@ directly. Directory junctions do not require enabling Windows Developer Mode.
 The profile enables `base` and this mod. Setup restores that small mod list for
 reproducible tests; add other mod dependencies deliberately when development
 needs them. Your regular `%APPDATA%\Factorio` mods, saves, and settings are not
-part of this profile. The starter does not require Space Age.
+part of this profile. Space Age is not required; the development profile
+explicitly disables the bundled expansion mods.
 
 - Development saves: `.dev/user-data/saves/`
 - Captured test output: `.dev/logs/`
@@ -83,10 +146,21 @@ part of this profile. The starter does not require Space Age.
 - Game log: `.dev/user-data/factorio-current.log`
 - Machine-specific editor configuration: `.vscode/settings.json` (untracked)
 
-Use a new game or reload a save after changing runtime Lua. Prototype changes
-in `data.lua` require restarting the game. Smoke tests create uniquely named
-saves and retain their logs; they do not exercise gameplay that has not yet
-been implemented or verify interactive debugger breakpoints.
+Use a new game or reload a save after changing runtime Lua. Prototype or setting
+definition changes require restarting the game. Smoke tests create uniquely
+named saves and retain their logs. The scenario suite uses Node.js, or VS Code's
+bundled Node runtime when no standalone Node installation is available. Its
+private servers bind to localhost and retain results under `.dev/wave-tests/`.
+They do not verify interactive debugger breakpoints or real multiplayer clients.
+The suite compares default maps against an unmodded server and exercises actual
+resource entities, terrain-clipped defenses, pending settings, restart, save/load,
+and wave attack groups. Its disposable mod copies include a test-only settings
+writer. Because an empty server has zero native wave power, wave tests make the
+small-biter price zero only in that test save; native spawner selection, pathing,
+and attack commands still run. For stock-size bases the clientless test also
+generates the native preview's 320-tile extent, since no minimap is open. At 300%
+the wave checks make no test terrain requests and rely on the mod's own outer
+generation. None of these test accommodations is included in the release.
 
 ## Format and package
 
@@ -96,7 +170,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 Packag
 ```
 
 Packaging validates first, then writes
-`dist/wave-defense-enhanced_0.1.0.zip` with the required mod folder inside it.
+`dist/wave-defense-enhanced_0.2.0.zip` with the required mod folder inside it.
 Only files from `mod/` are packaged. Rebuilding replaces that version's local
 archive. Increment `mod/info.json` and add a `mod/changelog.txt` entry when
 preparing a new version.
@@ -107,19 +181,40 @@ preparing a new version.
 mod/
   info.json              Identity, target game version, dependencies
   control.lua            Runtime events, persistent state, status command
+  settings.lua           Map setting prototypes and defaults
+  scripts/config.lua     Settings resolution and map-generation overrides
   data.lua               Prototype-stage entry point
   locale/en/wave-defense-enhanced.cfg  English strings
   changelog.txt          Factorio-formatted change history
 scripts/
   dev.ps1                Setup, checks, formatting, game tests, packaging, play
   setup-editor.ps1       Compatible extensions and game-specific Lua definitions
+  test-wave-defense.mjs  Real-scenario integration tests using local RCON
 .vscode/                 Tasks, debugger configuration, extension recommendations
 ```
 
 Use `storage` for persistent runtime state and keep simulation behavior
 deterministic for multiplayer. Register runtime events and commands in
 `control.lua`; add prototype definitions through `data.lua` and modules it
-loads. The current scaffold preserves its state during configuration changes.
+loads. Applied configuration snapshots persist across save/load.
+
+## Integration design
+
+The mod recognizes `script.level` as `base/wave-defense`, checks the scenario's
+remote interface, and handles its newly created `Surface N` before any chunks
+exist. It updates only resource autoplace controls and, when requested, starting
+area. Everything else, including enemy settings and island/infinite terrain,
+stays under the original scenario's control.
+
+Factorio raises `on_surface_created` synchronously. The stock scenario then
+queries the updated starting-area radius before generating chunks and placing
+defenses. This also keeps its attack targeting consistent with the base size.
+No base-game files are modified or redistributed; no replacement scenario is
+required. The mod deliberately avoids vanilla's wholesale remote `set_config`
+operation, which can disconnect its active difficulty table from its config.
+
+`wave_defense_enhanced.get_status` is a read-only remote interface for diagnostics.
+Future changes to the built-in scenario require rerunning the integration suite.
 
 ## Git
 
