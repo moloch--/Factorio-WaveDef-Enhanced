@@ -253,6 +253,11 @@ export class FactorioServer {
         end
         ores[name]={count=#positions,amount=amount,positions=hash(positions),amounts=hash(amounts)}
       end
+      local water={}
+      for _,tile in pairs(s.find_tiles_filtered{area={{-320,-320},{320,320}},collision_mask='water_tile'}) do
+        local p=tile.position
+        water[#water+1]=tile.name..':'..p.x..','..p.y
+      end
       local defenses={}; local walls=0; local gates=0; local turrets=0; local ammo=0; local full_ammo=true
       local min_x=math.huge; local max_x=-math.huge; local min_y=math.huge; local max_y=-math.huge
       for _,entity in pairs(s.find_entities_filtered{name={'stone-wall','gate','gun-turret'},force='player'}) do
@@ -276,7 +281,7 @@ export class FactorioServer {
       end
       for x=min_x,max_x do check_wall(x,min_y); check_wall(x,max_y) end
       for y=min_y+1,max_y-1 do check_wall(min_x,y); check_wall(max_x,y) end
-      local result={settings=s.map_gen_settings,ores=ores,defenses={walls=walls,gates=gates,turrets=turrets,ammo=ammo,full_ammo=full_ammo,hash=hash(defenses),min_x=min_x,max_x=max_x,min_y=min_y,max_y=max_y,missing_water=missing_water,missing_walkable=missing_walkable},silo=storage.wave_defense.silo and storage.wave_defense.silo.valid or false}
+      local result={settings=s.map_gen_settings,ores=ores,water={count=#water,hash=hash(water)},defenses={walls=walls,gates=gates,turrets=turrets,ammo=ammo,full_ammo=full_ammo,hash=hash(defenses),min_x=min_x,max_x=max_x,min_y=min_y,max_y=max_y,missing_water=missing_water,missing_walkable=missing_walkable},silo=storage.wave_defense.silo and storage.wave_defense.silo.valid or false}
     `.replaceAll('\n', ' '));
   }
 
@@ -338,6 +343,41 @@ export async function runIntegrationTests() {
         const actual = await enhanced.generate({ difficulty });
         assert.equal(actual.settings.starting_area, expected);
         assertDefenses(actual);
+      }
+    });
+    await check('water amount changes generated water in both map types without changing other controls', async () => {
+      const waterEvidence = [];
+      for (const infinite of [false, true]) {
+        await enhanced.settings({ 'wde-water-amount': 100, 'wde-starting-area-mode': 'difficulty', 'wde-resource-preset': 'wave-defense' });
+        const native = await enhanced.generate({ infinite });
+        assert.ok(native.water.count > 0, `native ${infinite ? 'infinite' : 'island'} terrain has water`);
+        const counts = { 100: native.water.count };
+        for (const amount of [25, 400, 600, 0]) {
+          await enhanced.settings({ 'wde-water-amount': amount });
+          const actual = await enhanced.generate({ infinite });
+          counts[amount] = actual.water.count;
+          assert.equal(actual.settings.starting_area, native.settings.starting_area);
+          assert.deepEqual(actual.settings.autoplace_controls, native.settings.autoplace_controls, 'water preserves resource, enemy and tree controls');
+          assert.deepEqual(actual.settings.cliff_settings, native.settings.cliff_settings);
+          assertDefenses(actual);
+          const status = await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")');
+          assert.equal(status.applied.options.water_amount, amount / 100);
+          assert.equal(status.pending, false);
+          assert.deepEqual(await enhanced.generate({ infinite }), actual, `water ${amount}% is reproducible for the same seed`);
+        }
+        const evidence = { infinite, seed, counts };
+        waterEvidence.push(evidence);
+        console.log(`Water evidence ${JSON.stringify(evidence)}`);
+        writeFileSync(path.join(runRoot, 'water-evidence.json'), JSON.stringify(waterEvidence, null, 2));
+        assert.equal(counts[0], 0, 'zero water produces no water tiles');
+        assert.ok(counts[25] < counts[100], `lower water reduces water tiles: ${JSON.stringify(evidence)}`);
+        assert.ok(counts[400] > counts[100], `higher water increases water tiles: ${JSON.stringify(evidence)}`);
+        assert.ok(counts[600] > counts[400], `maximum water further increases water tiles: ${JSON.stringify(evidence)}`);
+        await enhanced.settings({ 'wde-water-amount': 100 });
+        assert.deepEqual(await enhanced.generate({ infinite }), native, 'restoring 100% restores native terrain and map settings');
+        const restored = await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")');
+        assert.equal(restored.applied.options.water_amount, undefined, 'default water does not add an applied override');
+        assert.equal(restored.pending, false);
       }
     });
     await check('custom resource controls keep native values and unrelated map settings', async () => {
@@ -402,20 +442,24 @@ export async function runIntegrationTests() {
       }
     });
     await check('settings remain pending until regeneration, including during a round', async () => {
-      await enhanced.settings({ 'wde-starting-area-size': 100 });
+      await enhanced.settings({ 'wde-starting-area-size': 100, 'wde-water-amount': 100 });
       const before = await enhanced.generate();
       await enhanced.command('/c start_round()');
-      await enhanced.settings({ 'wde-starting-area-size': 225, 'wde-resource-preset': 'freeplay' });
+      await enhanced.settings({ 'wde-starting-area-size': 225, 'wde-resource-preset': 'freeplay', 'wde-water-amount': 25 });
       assert.deepEqual(await enhanced.snapshot(), before);
       const pending = await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")');
       assert.equal(pending.pending, true);
       assert.equal(pending.applied.starting_area, 1);
       assert.equal(pending.next_options.starting_area, 2.25);
+      assert.equal(pending.applied.options.water_amount, undefined);
+      assert.equal(pending.next_options.water_amount, 0.25);
       await enhanced.command('/c restart_round(); storage.wave_defense.surface.request_to_generate_chunks({0,0},10); storage.wave_defense.surface.force_generate_chunk_requests()');
       const restarted = await enhanced.snapshot();
       assert.equal(restarted.settings.starting_area, 2.25);
       assert.equal(restarted.settings.autoplace_controls['iron-ore'].richness, 1);
-      assert.equal((await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")')).pending, false);
+      const applied = await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")');
+      assert.equal(applied.pending, false);
+      assert.equal(applied.applied.options.water_amount, 0.25);
       assertDefenses(restarted);
     });
     await check('same seed and configuration reproduce resources and defense layout', async () => {
@@ -425,6 +469,8 @@ export async function runIntegrationTests() {
     });
     await check('save/reload retains settings, surface state and regeneration behavior', async () => {
       const before = await enhanced.snapshot();
+      const beforeStatus = await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")');
+      assert.equal(beforeStatus.applied.options.water_amount, 0.25);
       const save = path.join(enhanced.directory, 'user-data', 'saves', 'wde-integration.zip');
       await enhanced.command('/server-save wde-integration');
       const deadline = Date.now() + 30_000;
@@ -435,18 +481,25 @@ export async function runIntegrationTests() {
       await enhanced.stop('before-reload');
       await enhanced.start(save);
       assert.deepEqual(await enhanced.snapshot(), before);
+      assert.deepEqual(await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")'), beforeStatus);
       const regenerated = await enhanced.generate({ mapSeed: 123456789 });
       assert.deepEqual(regenerated, before);
     });
     await check('native wave spawning finds spawners at every supported base size and map type', async () => {
-      await enhanced.settings({ 'wde-starting-area-mode': 'custom', 'wde-resource-preset': 'wave-defense' });
+      await enhanced.settings({ 'wde-starting-area-mode': 'custom', 'wde-resource-preset': 'wave-defense', 'wde-water-amount': 100 });
       // A headless server has no connected players, so native wave power is zero.
       // Temporarily make one unit free in this disposable scenario. The stock loop
       // exits after that purchase, exercising real spawn/path/attack code unchanged.
       const waveEvidence = [];
+      const waveCases = [
+        ...[100, 175, 300].map((size) => ({ size, mapSeed: seed, waterAmount: 100 })),
+        ...[123456789, 42].map((mapSeed) => ({ size: 300, mapSeed, waterAmount: 100 })),
+        ...[seed, 123456789, 42].map((mapSeed) => ({ size: 175, mapSeed, waterAmount: 600 })),
+        { size: 300, mapSeed: seed, waterAmount: 600 },
+      ];
       for (const infinite of [false, true]) {
-        for (const { size, mapSeed } of [100, 175, 300].map((size) => ({ size, mapSeed: seed })).concat([{ size: 300, mapSeed: 123456789 }, { size: 300, mapSeed: 42 }])) {
-          await enhanced.settings({ 'wde-starting-area-size': size });
+        for (const { size, mapSeed, waterAmount } of waveCases) {
+          await enhanced.settings({ 'wde-starting-area-size': size, 'wde-water-amount': waterAmount });
           // With no rendering clients, vanilla's chart preview does not request
           // chunks. Emulate only its stock ten-chunk preview for native-sized bases.
           // Large bases must discover spawners using the product's requests alone.
@@ -462,7 +515,7 @@ export async function runIntegrationTests() {
           } while (evidence.tick - started < 600 || (evidence.registered === 0 && evidence.tick - started < 6000));
           await enhanced.command('/c game.tick_paused=true; for i=1,20 do spawn_units() end; storage.wave_defense.difficulty.unit_prices["small-biter"]=25');
           const attackers = await enhanced.evaluate('{units=#units,groups=table_size(groups),attack_groups=table_size(attack_groups),silo=storage.wave_defense.silo.valid}', 'local units=storage.wave_defense.surface.find_entities_filtered{type="unit",force="enemy"}; local groups={}; local attack_groups={}; for _,unit in pairs(units) do local group=unit.commandable.parent_group; if group then groups[group.unique_id]=true; local command=group.command; if command and command.commands and command.commands[3] and command.commands[3].target==storage.wave_defense.silo then attack_groups[group.unique_id]=true end end end;');
-          waveEvidence.push({ size, infinite, seed: mapSeed, preview_emulated: size <= 225, ...evidence, ...attackers });
+          waveEvidence.push({ size, infinite, seed: mapSeed, water_amount: waterAmount, preview_emulated: size <= 225, ...evidence, ...attackers });
           console.log(`Wave evidence ${JSON.stringify(waveEvidence.at(-1))}`);
           writeFileSync(path.join(runRoot, 'wave-evidence.json'), JSON.stringify(waveEvidence, null, 2));
         }
@@ -473,11 +526,12 @@ export async function runIntegrationTests() {
     await freeplay.start();
     await check('ordinary Freeplay and similarly named surfaces keep their generation settings', async () => {
       const before = await freeplay.evaluate('game.surfaces.nauvis.map_gen_settings');
-      await freeplay.settings({ 'wde-resource-preset': 'freeplay', 'wde-iron-ore-enabled': false, 'wde-starting-area-mode': 'custom', 'wde-starting-area-size': 300 });
+      await freeplay.settings({ 'wde-resource-preset': 'freeplay', 'wde-iron-ore-enabled': false, 'wde-starting-area-mode': 'custom', 'wde-starting-area-size': 300, 'wde-water-amount': 400 });
       assert.deepEqual(await freeplay.evaluate('game.surfaces.nauvis.map_gen_settings'), before);
-      const actual = await freeplay.evaluate('s.map_gen_settings', 'local s=game.create_surface("Surface 42",{seed=123,starting_area=1.25,autoplace_controls={["iron-ore"]={frequency=2,size=3,richness=4}}});');
-      assert.equal(actual.starting_area, 1.25);
-      assert.deepEqual(actual.autoplace_controls['iron-ore'], { frequency: 2, size: 3, richness: 4 });
+      const surfaces = await freeplay.evaluate('{reference=reference.map_gen_settings,actual=s.map_gen_settings}', 'local reference=game.create_surface("Water control reference",{seed=123,starting_area=1.25,autoplace_controls={["iron-ore"]={frequency=2,size=3,richness=4}}}); local s=game.create_surface("Surface 42",reference.map_gen_settings);');
+      assert.deepEqual(surfaces.actual, surfaces.reference, 'all generation settings stay native outside Wave Defense');
+      assert.equal(surfaces.actual.starting_area, 1.25);
+      assert.deepEqual(surfaces.actual.autoplace_controls['iron-ore'], { frequency: 2, size: 3, richness: 4 });
     });
     writeFileSync(path.join(runRoot, 'results.json'), JSON.stringify({ factorio, results }, null, 2));
     console.log(`Passed ${results.length} actual-game integration checks. Logs: ${runRoot}`);

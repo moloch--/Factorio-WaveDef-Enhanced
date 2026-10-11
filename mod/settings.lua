@@ -26,6 +26,15 @@ local prototypes = {
     maximum_value = 300,
     order = "b[starting-area]-b[size]",
   },
+  {
+    type = "double-setting",
+    name = "wde-water-amount",
+    setting_type = "runtime-global",
+    default_value = 100,
+    minimum_value = 0,
+    maximum_value = 600,
+    order = "b[starting-area]-c[water]",
+  },
 }
 
 local dimensions = { "frequency", "size", "richness" }

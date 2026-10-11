@@ -1,4 +1,29 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.5.0
+Date: 2026-10-11
+  Features:
+    - Add the Wave Defense Enhanced scenario, which loads the game's original Wave Defense logic and supports automatic preview regeneration.
+    - Regenerate the preview one second after the last setup edit, coalescing changes across controls and administrators.
+    - Automatically apply edited seeds after the same delay; Enter and Shuffle still update immediately.
+    - Keep invalid edits on screen, cancel obsolete refreshes after native rerolls, and preserve queued changes across save/load.
+  Changes:
+    - Launch the Enhanced scenario from the development launcher and debugger.
+  Info:
+    - Existing built-in Wave Defense saves retain manual preview updates because the original scenario exposes no regeneration interface.
+    - Automatic regeneration only operates in the setup preview; changes during a round stay pending.
+---------------------------------------------------------------------------------------------------
+Version: 0.4.0
+Date: 2026-10-11
+  Features:
+    - Add a Water amount slider and percentage field under Starting area, independent of resource presets and area mode.
+    - Adjust water coverage on island and infinite battle maps from 0% to 600%, preserving native terrain at 100%.
+    - Report the applied water setting with /wde-status.
+  Bugfixes:
+    - Preserve invalid starting-area and water edits when changing resource presets.
+  Info:
+    - Zero water removes lakes and the island ocean. Higher water settings preserve the immediate spawn area.
+    - Water changes apply on the next preview regeneration or round restart.
+---------------------------------------------------------------------------------------------------
 Version: 0.3.0
 Date: 2026-10-11
   Features:

@@ -1,0 +1,102 @@
+name: Package mod
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  package:
+    name: Validate and package
+    runs-on: windows-latest
+    timeout-minutes: 15
+    outputs:
+      filename: ${{ steps.package.outputs.filename }}
+      version: ${{ steps.package.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate and build the Factorio ZIP
+        id: package
+        shell: pwsh
+        env:
+          BUILD_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $info = Get-Content -LiteralPath mod/info.json -Raw | ConvertFrom-Json
+          if ($env:BUILD_TAG -and $env:BUILD_TAG -cne "v$($info.version)") {
+            throw "Tag '$env:BUILD_TAG' must match mod/info.json version: v$($info.version)"
+          }
+          ./scripts/dev.ps1 Package
+          if ($LASTEXITCODE -ne 0) { throw 'Mod validation or packaging failed.' }
+
+          $baseName = "$($info.name)_$($info.version)"
+          $filename = "$baseName.zip"
+          $archivePath = Join-Path 'dist' $filename
+          $archive = [IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $archivePath).Path)
+          try {
+            if (-not $archive.GetEntry("$baseName/info.json")) { throw 'ZIP is missing the mod metadata.' }
+            foreach ($entry in $archive.Entries) {
+              if (-not $entry.FullName.StartsWith("$baseName/", [StringComparison]::Ordinal)) {
+                throw "Unexpected ZIP path: $($entry.FullName)"
+              }
+            }
+          } finally { $archive.Dispose() }
+
+          "filename=$filename" >> $env:GITHUB_OUTPUT
+          "version=$($info.version)" >> $env:GITHUB_OUTPUT
+          $digest = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "### Installable mod package" >> $env:GITHUB_STEP_SUMMARY
+          "Download **$filename** from this run's artifacts and put the ZIP in your Factorio mods folder." >> $env:GITHUB_STEP_SUMMARY
+          "SHA-256: $digest" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload installable ZIP
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/${{ steps.package.outputs.filename }}
+          # Preserve the Factorio ZIP directly instead of wrapping it in another ZIP.
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Publish tagged release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Download validated ZIP
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.package.outputs.filename }}
+          path: dist
+          # The artifact itself is the mod ZIP; do not unpack its contents.
+          skip-decompress: true
+
+      - name: Create GitHub Release with the mod attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          PACKAGE_NAME: ${{ needs.package.outputs.filename }}
+          MOD_VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          gh release create "$RELEASE_TAG" "dist/$PACKAGE_NAME" \
+            --verify-tag \
+            --title "Wave Defense Enhanced $MOD_VERSION" \
+            --generate-notes

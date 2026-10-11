@@ -100,6 +100,11 @@ remote.add_interface("wde_test_gui", {
     local handled=test_gui.handle_event({player_index=1,name=defines.events.on_gui_selection_state_changed,element=saved.preset},{active=function() return false end,status=test_context.status})
     return {handled=handled,before=before,after=settings.global["wde-resource-preset"].value}
   end,
+  legacy_controls = function()
+    local saved=storage.wde_setup_gui.players[1]
+    saved.numbers["wde-water-amount"]=nil
+    test_refresh()
+  end,
   remove = function() test_gui.remove_player(1) end,
 })
 `);
@@ -140,7 +145,7 @@ try {
   assert.ok(players.count > 0, 'WDE_GUI_SAVE must contain an existing player');
   assert.equal(players.level.mod_name, 'base');
   assert.equal(players.level.level_name, 'wave-defense');
-  const initial = { 'wde-resource-preset': 'wave-defense', 'wde-starting-area-mode': 'difficulty' };
+  const initial = { 'wde-resource-preset': 'wave-defense', 'wde-starting-area-mode': 'difficulty', 'wde-water-amount': 100 };
   for (const resource of ['iron-ore', 'copper-ore', 'coal', 'stone', 'uranium-ore', 'crude-oil']) {
     initial[`wde-${resource}-enabled`] = true;
     // Deliberately stale stored custom numbers catch incorrect preset seeding.
@@ -157,10 +162,13 @@ try {
     assert.equal(actual.start_enabled, true);
     assert.equal(actual.preset, 1);
     assert.equal(Object.keys(actual.checks).length, 6);
-    assert.equal(Object.keys(actual.numbers).length, 19);
+    assert.equal(Object.keys(actual.numbers).length, 20);
     assert.equal(actual.numbers['wde-iron-ore-richness'].text, '200');
     assert.equal(actual.numbers['wde-crude-oil-frequency'].text, '200');
     assert.equal(actual.numbers['wde-uranium-ore-size'].text, '50');
+    assert.equal(actual.numbers['wde-water-amount'].text, '100');
+    assert.equal(actual.numbers['wde-water-amount'].enabled, true);
+    assert.equal(actual.status.next_options.water_amount, undefined);
   });
   await check('narrow and wide layouts create valid engine controls with visible regeneration notice', async () => {
     // A proxy overrides only display dimensions. GuiElements, settings, handlers,
@@ -187,6 +195,18 @@ try {
     }
     await refresh();
   });
+  await check('an existing setup frame from before water controls upgrades on refresh', async () => {
+    const before = await gui();
+    await server.command('/c remote.call("wde_test_gui","legacy_controls")');
+    const actual = await gui();
+    assert.equal(actual.present, true);
+    assert.notEqual(actual.body_index, before.body_index);
+    assert.equal(Object.keys(actual.numbers).length, 20);
+    assert.equal(actual.numbers['wde-water-amount'].text, '100');
+    assert.equal(actual.numbers['wde-water-amount'].enabled, true);
+    assert.equal(actual.preset, before.preset);
+    assert.equal(actual.start_enabled, true);
+  });
   await check('editing a default-preset value seeds all custom controls from visible values', async () => {
     await event('field', 'wde-iron-ore-richness', '425');
     const actual = await gui();
@@ -204,7 +224,7 @@ try {
     const actual = await gui();
     assert.equal(actual.preset, 3);
     for (const [name, number] of Object.entries(actual.numbers)) {
-      if (name !== 'wde-starting-area-size') assert.equal(number.text, '100');
+      if (/^wde-(iron-ore|copper-ore|coal|stone|uranium-ore|crude-oil)-/.test(name)) assert.equal(number.text, '100');
     }
     await regenerate();
     assert.equal((await gui()).start_enabled, true);
@@ -241,6 +261,95 @@ try {
     await event('field', 'wde-iron-ore-richness', '100');
     assert.equal((await gui()).start_enabled, true);
   });
+  await check('water amount remains independent of resource presets and starting-area mode', async () => {
+    const before = await gui();
+    await event('field', 'wde-water-amount', '200');
+    let actual = await gui();
+    assert.equal(actual.preset, before.preset);
+    assert.equal(actual.area_mode, before.area_mode);
+    assert.deepEqual(actual.status.next_options.resources, before.status.next_options.resources);
+    assert.equal(actual.status.next_options.water_amount, 2);
+    for (const preset of [1, 2, 3]) {
+      await event('preset', undefined, preset);
+      actual = await gui();
+      assert.equal(actual.preset, preset);
+      assert.equal(actual.numbers['wde-water-amount'].text, '200');
+      assert.equal(actual.status.next_options.water_amount, 2);
+    }
+    for (const mode of [2, 1]) {
+      await event('area-mode', undefined, mode);
+      actual = await gui();
+      assert.equal(actual.area_mode, mode);
+      assert.equal(actual.numbers['wde-water-amount'].enabled, true);
+      assert.equal(actual.numbers['wde-water-amount'].text, '200');
+      assert.equal(actual.status.next_options.water_amount, 2);
+    }
+    await event('field', 'wde-water-amount', '100');
+    assert.equal((await gui()).start_enabled, true);
+  });
+  await check('zero water stays pending until regeneration and becomes the applied preview setting', async () => {
+    await event('slider', 'wde-water-amount', 0);
+    let actual = await gui();
+    assert.equal(actual.numbers['wde-water-amount'].text, '0');
+    assert.equal(actual.numbers['wde-water-amount'].value, 0);
+    assert.equal(actual.status.next_options.water_amount, 0);
+    assert.equal(actual.status.applied.options.water_amount, undefined);
+    assert.equal(actual.status.pending, true);
+    assert.equal(actual.start_enabled, false);
+    actual = await regenerate();
+    assert.equal(actual.status.applied.options.water_amount, 0);
+    assert.equal(actual.status.pending, false);
+    assert.equal(actual.start_enabled, true);
+  });
+  await check('water decimal input and invalid bounds survive refresh and native preview rebuild', async () => {
+    await event('slider', 'wde-water-amount', 600);
+    let actual = await gui();
+    assert.equal(actual.numbers['wde-water-amount'].text, '600');
+    assert.equal(actual.status.next_options.water_amount, 6);
+    await event('field', 'wde-water-amount', '125.');
+    actual = await refresh();
+    assert.equal(actual.numbers['wde-water-amount'].text, '125.');
+    assert.equal(actual.status.next_options.water_amount, 1.25);
+    await event('field', 'wde-water-amount', '125.5');
+    actual = await refresh();
+    assert.equal(actual.numbers['wde-water-amount'].text, '125.5');
+    assert.equal(actual.status.next_options.water_amount, 1.255);
+    for (const value of ['', '-1', '601']) {
+      await event('field', 'wde-water-amount', value);
+      actual = await gui();
+      assert.equal(actual.numbers['wde-water-amount'].text, value);
+      assert.equal(actual.status.next_options.water_amount, 1.255);
+      assert.equal(actual.validation_visible, true);
+      assert.equal(actual.start_enabled, false);
+    }
+    for (const preset of [2, 3]) {
+      await event('preset', undefined, preset);
+      actual = await gui();
+      assert.equal(actual.numbers['wde-water-amount'].text, '601');
+      assert.equal(actual.status.next_options.water_amount, 1.255);
+      assert.equal(actual.validation_visible, true);
+      assert.equal(actual.start_enabled, false);
+    }
+    await server.command('/c refresh_preview_gui(game.players[1])');
+    actual = await refresh();
+    assert.equal(actual.numbers['wde-water-amount'].text, '601');
+    assert.equal(actual.validation_visible, true);
+    assert.equal(actual.start_enabled, false);
+    await event('discard');
+    actual = await gui();
+    assert.equal(actual.numbers['wde-water-amount'].text, '125.5');
+    assert.equal(actual.validation_visible, false);
+    assert.equal(actual.start_enabled, false, 'discarding invalid text must not apply pending water changes');
+    await event('field', 'wde-water-amount', '100');
+    actual = await gui();
+    assert.equal(actual.status.next_options.water_amount, undefined);
+    assert.equal(actual.status.applied.options.water_amount, 0);
+    assert.equal(actual.start_enabled, false);
+    actual = await regenerate();
+    assert.equal(actual.status.applied.options.water_amount, undefined);
+    assert.equal(actual.status.pending, false);
+    assert.equal(actual.start_enabled, true);
+  });
   await check('checkboxes and area controls remain pending until native regeneration', async () => {
     await event('enabled', 'coal', false);
     await event('area-mode', undefined, 2);
@@ -259,24 +368,33 @@ try {
   });
   await check('native preview rebuild restores controls and pending Start guard', async () => {
     await event('field', 'wde-iron-ore-size', '180');
+    await event('field', 'wde-water-amount', '175');
     const before = await gui();
     await server.command('/c refresh_preview_gui(game.players[1])');
     const after = await refresh();
     assert.notEqual(after.body_index, before.body_index);
     assert.equal(after.present, true);
     assert.equal(after.numbers['wde-iron-ore-size'].text, '180');
+    assert.equal(after.numbers['wde-water-amount'].text, '175');
+    assert.equal(after.status.next_options.water_amount, 1.75);
     assert.equal(after.start_enabled, false);
   });
   await check('non-admin events cannot change settings even if a control is forcibly enabled', async () => {
     await server.command('/c game.players[1].admin=false');
     const before = await refresh();
     assert.equal(before.preset_enabled, false);
+    assert.equal(before.numbers['wde-water-amount'].enabled, false);
     assert.equal(before.start_enabled, false);
     const result = await event('preset', undefined, 1, true);
     const after = await gui();
     assert.equal(result.handled, false);
     assert.deepEqual(after.status.next_options, before.status.next_options);
     assert.equal(after.preset_enabled, false);
+    const waterResult = await event('field', 'wde-water-amount', '300', true);
+    const afterWater = await gui();
+    assert.equal(waterResult.handled, false);
+    assert.deepEqual(afterWater.status.next_options, before.status.next_options);
+    assert.equal(afterWater.numbers['wde-water-amount'].enabled, false);
     await server.command('/c game.players[1].admin=true');
     await refresh();
   });

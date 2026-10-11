@@ -6,6 +6,8 @@ local dimensions = { "frequency", "size", "richness" }
 local presets = { "wave-defense", "freeplay", "custom" }
 local area_modes = { "difficulty", "custom" }
 local changing_settings = false
+local debounce_ticks = 60
+local preview_interface = "wave_defense_enhanced_preview"
 
 local function saved_players()
   storage.wde_setup_gui = storage.wde_setup_gui or { players = {} }
@@ -14,6 +16,15 @@ end
 
 local function valid(element)
   return element and element.valid
+end
+
+local function active_players(context)
+  return context.players and context.players() or game.connected_players
+end
+
+local function automatic_preview()
+  local interface = remote.interfaces[preview_interface]
+  return interface and interface.get_state and interface.regenerate
 end
 
 local function caption_is(element, key)
@@ -133,7 +144,11 @@ local function add_number(parent, saved, setting, minimum, maximum, tags, slider
     tags = tags,
   })
   field.style.width = 60
-  field.tooltip = { "wde-setup.percentage-range", minimum, maximum }
+  field.tooltip = {
+    automatic_preview() and "wde-setup.percentage-range-auto" or "wde-setup.percentage-range",
+    minimum,
+    maximum,
+  }
   flow.add({ type = "label", caption = "%" }).style.width = 16
   saved.numbers[setting] = {
     slider = slider,
@@ -265,6 +280,20 @@ local function build(player, native, previous, sizes)
   saved.area_hint = label(controls, "difficulty-area")
   saved.area_hint.style.single_line = false
   saved.area_hint.style.maximal_width = sizes.controls - 40
+  local water_flow = controls.add({ type = "flow", direction = "horizontal" })
+  water_flow.style.vertical_align = "center"
+  water_flow.style.horizontal_spacing = 12
+  label(water_flow, "water-amount").tooltip = { "wde-setup.water-help" }
+  add_number(
+    water_flow,
+    saved,
+    "wde-water-amount",
+    0,
+    600,
+    { kind = "water-amount", setting = "wde-water-amount" },
+    200
+  )
+  saved.numbers["wde-water-amount"].slider.tooltip = { "wde-setup.water-help" }
   saved.read_only = label(controls, "read-only")
   saved.read_only.style.single_line = false
   saved.read_only.style.maximal_width = sizes.controls - 40
@@ -298,7 +327,9 @@ local function build(player, native, previous, sizes)
   saved.preview = preview
   native.minimap.visible = false
   if native.seed then
-    native.seed.tooltip = { "wde-setup.seed-help" }
+    native.seed.tooltip = {
+      automatic_preview() and "wde-setup.seed-help-auto" or "wde-setup.seed-help",
+    }
   end
   native.frame.force_auto_center()
   return saved
@@ -325,7 +356,11 @@ local function sync_number(saved, setting, value, enabled)
     pair.field.text = text
   end
   pair.field.tooltip = invalid and { "wde-setup.invalid-range", pair.minimum, pair.maximum }
-    or { "wde-setup.percentage-range", pair.minimum, pair.maximum }
+    or {
+      automatic_preview() and "wde-setup.percentage-range-auto" or "wde-setup.percentage-range",
+      pair.minimum,
+      pair.maximum,
+    }
 end
 
 local function sync(player, saved, current)
@@ -353,16 +388,23 @@ local function sync(player, saved, current)
     settings.global["wde-starting-area-size"].value,
     player.admin and options.starting_area_mode == "custom"
   )
+  sync_number(saved, "wde-water-amount", (options.water_amount or 1) * 100, player.admin)
   saved.area_hint.visible = options.starting_area_mode == "difficulty"
   saved.read_only.visible = not player.admin
   local invalid = next(saved.invalid) ~= nil
   saved.validation.visible = invalid
   saved.discard.visible = invalid and player.admin
-  saved.notice.caption = current.pending and { "wde-setup.preview-pending" }
-    or { "wde-setup.preview-current" }
-  saved.notice.style.font_color = current.pending and { 1, 0.8, 0.3 } or { 0.7, 0.85, 0.7 }
-  saved.native.start.enabled = player.admin and not current.pending and not invalid
-  saved.native.start.tooltip = current.pending and { "wde-setup.preview-pending" }
+  local queued = storage.wde_setup_gui.refresh
+  local seed_pending = queued and queued.seed_player_index ~= nil
+  local pending = current.pending or seed_pending
+  local pending_caption = automatic_preview()
+      and not storage.wde_setup_gui.refresh_failed
+      and { "wde-setup.preview-auto" }
+    or { "wde-setup.preview-pending" }
+  saved.notice.caption = pending and pending_caption or { "wde-setup.preview-current" }
+  saved.notice.style.font_color = pending and { 1, 0.8, 0.3 } or { 0.7, 0.85, 0.7 }
+  saved.native.start.enabled = player.admin and not pending and not invalid
+  saved.native.start.tooltip = pending and pending_caption
     or invalid and { "wde-setup.invalid-values" }
     or { "wde-setup.start-ready" }
 end
@@ -376,6 +418,7 @@ local function refresh_player(player, current)
     if
       not saved
       or not valid(saved.body)
+      or not saved.numbers["wde-water-amount"]
       or saved.native.frame ~= native.frame
       or saved.sizes.controls ~= sizes.controls
       or saved.sizes.preview ~= sizes.preview
@@ -406,9 +449,112 @@ function gui.refresh_all(context)
     return
   end
   local current = context.status()
-  for _, player in pairs(game.connected_players) do
+  for _, player in pairs(active_players(context)) do
     refresh_player(player, current)
   end
+end
+
+function gui.cancel_preview()
+  if storage.wde_setup_gui then
+    storage.wde_setup_gui.refresh = nil
+    storage.wde_setup_gui.refresh_failed = nil
+  end
+end
+
+-- One shared trailing-edge timer coalesces edits across controls and admins.
+-- Store ticks and surface identity so save/load and native rerolls stay safe.
+function gui.request_preview(context, player_index, seed_edit)
+  if not context.active() or not automatic_preview() then
+    return
+  end
+  local preview = remote.call(preview_interface, "get_state")
+  if not preview.in_preview or not preview.surface_index then
+    gui.cancel_preview()
+    return
+  end
+  saved_players()
+  local saved = storage.wde_setup_gui
+  local previous = saved.refresh
+  saved.refresh = {
+    due_tick = game.tick + debounce_ticks,
+    surface_index = preview.surface_index,
+    requester = player_index or (previous and previous.requester),
+    seed_player_index = seed_edit and player_index or (previous and previous.seed_player_index),
+  }
+  saved.refresh_failed = nil
+end
+
+local function valid_seed(text)
+  local seed = tonumber(text)
+  if seed and seed >= 0 and seed <= 4294967294 and seed == math.floor(seed) then
+    return seed
+  end
+end
+
+function gui.update_preview(context)
+  local saved = storage.wde_setup_gui
+  local queued = saved and saved.refresh
+  if not queued or saved.refresh_failed then
+    return
+  end
+  if not context.active() or not automatic_preview() then
+    gui.cancel_preview()
+    return
+  end
+  local preview = remote.call(preview_interface, "get_state")
+  if not preview.in_preview or preview.surface_index ~= queued.surface_index then
+    gui.cancel_preview()
+    return
+  end
+  if game.tick < queued.due_tick then
+    return
+  end
+
+  local requester, seed_editor
+  for _, player in pairs(active_players(context)) do
+    if player.admin then
+      local native = find_native(player)
+      local controls = saved.players[player.index]
+      if native and native.minimap.surface_index == preview.surface_index and controls then
+        -- Keep unfinished input on screen. A valid edit or Discard will rearm
+        -- the timer; another admin's edits must not destroy this player's draft.
+        if next(controls.invalid) or (native.seed and not valid_seed(native.seed.text)) then
+          return
+        end
+        if not requester or player.index == queued.requester then
+          requester = player
+        end
+        if player.index == queued.seed_player_index then
+          seed_editor = { player = player, seed = valid_seed(native.seed.text) }
+        end
+      end
+    end
+  end
+  if not requester then
+    gui.cancel_preview()
+    return
+  end
+  local seed = seed_editor and seed_editor.seed or preview.seed
+  local current = context.status()
+  gui.cancel_preview()
+  if not current.pending and seed == preview.seed then
+    gui.refresh_all(context)
+    return
+  end
+  local ok, regenerated = pcall(
+    remote.call,
+    preview_interface,
+    "regenerate",
+    (seed_editor and seed_editor.player or requester).index,
+    preview.surface_index,
+    seed
+  )
+  if not ok or not regenerated then
+    saved.refresh = queued
+    saved.refresh_failed = true
+    log("[wave-defense-enhanced] automatic preview refresh failed: " .. tostring(regenerated))
+  end
+  gui.refresh_all(context)
 end
 
 local function disable_starts()
@@ -452,6 +598,18 @@ function gui.handle_event(event, context)
     or element.name:sub(1, #prefix) ~= prefix
   then
     -- Vanilla handles its events first and may have destroyed every descendant.
+    local saved = saved_players()[event.player_index]
+    local player = game.get_player(event.player_index)
+    if
+      valid(element)
+      and saved
+      and player
+      and player.admin
+      and element == saved.native.seed
+      and event.name == defines.events.on_gui_text_changed
+    then
+      gui.request_preview(context, event.player_index, true)
+    end
     gui.refresh_all(context)
     return false
   end
@@ -464,7 +622,7 @@ function gui.handle_event(event, context)
   local tags = element.tags
   local kind = tags.kind
   local options = context.status().next_options
-  if kind == "resource" or kind == "area-size" then
+  if kind == "resource" or kind == "area-size" or kind == "water-amount" then
     local pair = saved.numbers[tags.setting]
     if not pair or (element ~= pair.slider and element ~= pair.field) then
       return false
@@ -479,6 +637,7 @@ function gui.handle_event(event, context)
     local value = element.type == "slider" and element.slider_value or tonumber(element.text)
     if not value or value ~= value or value < pair.minimum or value > pair.maximum then
       saved.invalid[tags.setting] = element.text
+      gui.request_preview(context, event.player_index)
       gui.refresh_all(context)
       return true
     end
@@ -508,8 +667,12 @@ function gui.handle_event(event, context)
     else
       set_setting("wde-resource-preset", preset)
     end
-    saved.invalid = {}
-    saved.typed = {}
+    for setting, pair in pairs(saved.numbers) do
+      if pair.resource then
+        saved.invalid[setting] = nil
+        saved.typed[setting] = nil
+      end
+    end
   elseif kind == "area-mode" and event.name == defines.events.on_gui_selection_state_changed then
     local mode = area_modes[element.selected_index]
     if not mode then
@@ -523,6 +686,7 @@ function gui.handle_event(event, context)
     return false
   end
   changing_settings = false
+  gui.request_preview(context, event.player_index)
   gui.refresh_all(context)
   return true
 end

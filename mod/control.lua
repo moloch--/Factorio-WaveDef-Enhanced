@@ -17,8 +17,9 @@ end
 local function is_wave_defense()
   local level = script.level
   local interface = remote.interfaces.wave_defense
-  return level.mod_name == "base"
-    and level.level_name == "wave-defense"
+  local supported_level = (level.mod_name == "base" and level.level_name == "wave-defense")
+    or (level.mod_name == script.mod_name and level.level_name == "wave-defense-enhanced")
+  return supported_level
     and not level.is_simulation
     and not level.is_tutorial
     and interface ~= nil
@@ -81,6 +82,7 @@ local function on_surface_created(event)
     return
   end
   local options = config.read(settings.global)
+  setup_gui.cancel_preview()
   surface.map_gen_settings = config.apply(original, options)
   local radius = surface.get_starting_area_radius()
   local base_radius = 32 * math.floor((radius / 32 - 1) / math.sqrt(2))
@@ -125,6 +127,9 @@ end)
 script.on_configuration_changed(function()
   initialize_storage()
   setup_gui.refresh_all(gui_context)
+  if status().pending then
+    setup_gui.request_preview(gui_context)
+  end
 end)
 script.on_event(defines.events.on_surface_created, on_surface_created)
 script.on_event(defines.events.on_surface_deleted, function(event)
@@ -141,7 +146,11 @@ script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
       state().notice_pending = true
     end
     setup_gui.refresh_all(gui_context)
+    setup_gui.request_preview(gui_context, event.player_index)
   end
+end)
+script.on_nth_tick(5, function()
+  setup_gui.update_preview(gui_context)
 end)
 script.on_nth_tick(30, function()
   -- Vanilla rebuilds its unnamed preview widgets after rerolls, difficulty
@@ -156,12 +165,18 @@ script.on_nth_tick(30, function()
 end)
 script.on_event(defines.events.on_player_joined_game, function(event)
   setup_gui.refresh_all(gui_context)
+  if status().pending then
+    setup_gui.request_preview(gui_context, event.player_index)
+  end
   if not is_wave_defense() or state().notified_players[event.player_index] then
     return
   end
   local player = game.get_player(event.player_index)
   if player then
-    player.print({ "wave-defense-enhanced.welcome" })
+    player.print({
+      remote.interfaces.wave_defense_enhanced_preview and "wave-defense-enhanced.welcome-auto"
+        or "wave-defense-enhanced.welcome",
+    })
     state().notified_players[event.player_index] = true
   end
 end)
@@ -175,10 +190,13 @@ script.on_event({
   defines.events.on_player_promoted,
   defines.events.on_player_demoted,
   defines.events.on_player_changed_force,
-}, function()
+}, function(event)
   -- These native handlers rebuild Start as enabled for admins. Restore the
   -- pending-settings guard within the same event, before another input arrives.
   setup_gui.refresh_all(gui_context)
+  if event.name == defines.events.on_player_promoted and status().pending then
+    setup_gui.request_preview(gui_context, event.player_index)
+  end
 end)
 script.on_event({
   defines.events.on_gui_click,
@@ -213,6 +231,7 @@ commands.add_command("wde-status", { "wave-defense-enhanced.command-help" }, fun
       applied.perimeter_width,
       { "string-mod-setting.wde-resource-preset-" .. applied.options.preset },
     })
+    reply({ "wave-defense-enhanced.water-status", (applied.options.water_amount or 1) * 100 })
   else
     reply({ "wave-defense-enhanced.not-applied" })
   end

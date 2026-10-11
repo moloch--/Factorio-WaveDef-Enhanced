@@ -9,7 +9,7 @@
       "modsPath": "${workspaceFolder}/.dev/mods",
       "adjustMods": {"wave-defense-enhanced": true},
       "disableExtraMods": true,
-      "factorioArgs": ["--disable-audio", "--load-scenario", "base/wave-defense"]
+      "factorioArgs": ["--disable-audio", "--load-scenario", "wave-defense-enhanced/wave-defense-enhanced"]
     }
   ]
 }

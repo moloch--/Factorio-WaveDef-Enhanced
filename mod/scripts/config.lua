@@ -65,6 +65,13 @@ function config.read(global_settings)
     options.starting_area = percentage(global_settings, "wde-starting-area-size", 175, 100, 300)
   end
 
+  local water_amount = percentage(global_settings, "wde-water-amount", 100, 0, 600)
+  -- Omit the default override so older applied snapshots still compare equal
+  -- and the scenario's original terrain settings remain untouched at 100%.
+  if water_amount ~= 1 then
+    options.water_amount = water_amount
+  end
+
   for _, name in ipairs(config.resource_names) do
     local resource = {
       enabled = setting_value(global_settings, "wde-" .. name .. "-enabled", true),
@@ -102,6 +109,16 @@ function config.apply(map_gen_settings, options)
 
   if options.starting_area ~= nil then
     result.starting_area = options.starting_area
+  end
+
+  if options.water_amount ~= nil then
+    local expressions = result.property_expression_names or {}
+    -- Retain the scenario's island/infinite generator underneath the water
+    -- adjustment. The wrapper leaves the central spawn dry when adding water.
+    expressions.wde_original_elevation = expressions.elevation or "elevation_nauvis"
+    expressions.wde_water_amount = tostring(options.water_amount)
+    expressions.elevation = "wde_water_elevation"
+    result.property_expression_names = expressions
   end
 
   return result
