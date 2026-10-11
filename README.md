@@ -4,6 +4,8 @@
 **built-in Wave Defense scenario**, targeting **Factorio 2.0.77**. The original
 scenario still handles waves, difficulty, upgrades, victory, and defenses.
 
+![Wave Defense setup with resource sliders, starting-area controls, and map preview](docs/images/wave-defense-setup.jpg)
+
 ## Play
 
 From this repository's PowerShell terminal:
@@ -248,13 +250,13 @@ Shuffle once so vanilla rebuilds its original preview widgets.
 
 ## Git
 
-The local repository uses `main`. Generated profiles, saves, tools, API
-definitions, and ZIPs are ignored. Commit identity is configured for this
+The public repository is [moloch--/Factorio-WaveDef-Enhanced](https://github.com/moloch--/Factorio-WaveDef-Enhanced).
+The local `main` branch tracks `origin/main`. Generated profiles, saves, tools,
+API definitions, and ZIPs are ignored. Commit identity is configured for this
 repository only, using the authenticated GitHub account and its GitHub noreply
-address. No remote repository has been created or configured.
+address.
 
-Choose a license before publishing or accepting contributions. No license has
-been selected for this new project yet.
+No license has been selected for this project yet.
 
 ## References
 
