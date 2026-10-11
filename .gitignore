@@ -1,0 +1,9 @@
+.dev/
+.tools/
+dist/
+.vscode/settings.json
+.vscode/factorio/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

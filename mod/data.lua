@@ -1,0 +1,2 @@
+-- Define new prototypes here with data:extend({...}).
+-- Runtime behavior belongs in control.lua; this scaffold adds no prototypes yet.
