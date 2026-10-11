@@ -46,6 +46,13 @@
       "problemMatcher": []
     },
     {
+      "label": "Factorio: Test Wave Defense GUI",
+      "type": "process",
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/scripts/dev.ps1", "TestWaveDefenseGui"],
+      "problemMatcher": []
+    },
+    {
       "label": "Factorio: Play Wave Defense",
       "type": "process",
       "command": "powershell.exe",

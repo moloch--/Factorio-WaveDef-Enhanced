@@ -1,6 +1,6 @@
 # Factorio Wave Defense Enhanced
 
-**Version 0.2.0:** resource controls and configurable starting areas for the
+**Version 0.3.0:** an integrated resource and starting-area setup panel for the
 **built-in Wave Defense scenario**, targeting **Factorio 2.0.77**. The original
 scenario still handles waves, difficulty, upgrades, victory, and defenses.
 
@@ -16,17 +16,24 @@ This opens vanilla Wave Defense in the isolated development profile with the mod
 enabled. Alternatively, install the release ZIP into your Factorio mods folder,
 enable it, and choose the built-in **Wave Defense** scenario.
 
-1. Before starting the round, open **Settings > Mod settings > Map**.
-2. Choose a resource preset: **Wave Defense defaults**, **Freeplay resource
-   defaults**, or **Custom**. Custom uses the frequency, size, and richness
-   percentage values for iron, copper, coal, stone, uranium, and crude oil.
-3. Set starting area to **Follow difficulty** or **Custom**, with a custom
-   percentage. Resource enable switches work with every resource preset.
-4. Return to the Wave Defense preview. Press **Enter** in the seed field to
-   regenerate with the same seed, or use **Shuffle** for a new seed. Then start
-   the round. `/wde-status` reports the applied settings and pending changes.
+1. Use the **Resources** panel beside the map preview on the Wave Defense
+   starting screen. Each of the six resources has an icon, an enable checkbox,
+   and **Frequency**, **Size**, and **Richness** sliders with percentage fields.
+2. Choose **Wave Defense defaults**, **Freeplay resource defaults**, or **Custom**.
+   Moving a resource slider switches to Custom while retaining the current
+   preset's other values. Enable switches work with every preset.
+3. Set starting area to **Follow difficulty** or **Custom**, then use its slider
+   or percentage field. Walls, gates, and turrets scale with the generated area.
+4. Press **Enter** in the seed field to regenerate with the same seed, or use
+   **Shuffle** for a new seed. The status below the controls tells you when the
+   preview needs updating; **Start** stays disabled until it matches the selected
+   settings. Start the round when ready.
 
-Settings are shared map settings; multiplayer admins control them. Edits during
+The same settings remain available through **Settings > Mod settings > Map**.
+`/wde-status` reports applied settings and pending changes.
+
+Settings are shared map settings; multiplayer admins control them and other
+players see a read-only panel. Edits during
 an active round remain pending until the next native preview regeneration or
 round restart. Installing into an existing game does not rebuild its current
 map. The mod does not change ordinary Freeplay or other scenarios.
@@ -63,10 +70,11 @@ beyond the enemy-free radius so native waves can find spawners. Larger areas
 therefore take more terrain generation work. Disabling essential resources can
 make a round unwinnable.
 
-This milestone uses the existing preview regeneration controls. It does not add
-a separate map-settings GUI, resize an existing battle map, change turret
-density, or support custom resources or overhaul mods that remove vanilla
-resource controls.
+Preview updates use the existing seed and Shuffle controls. The built-in
+scenario does not expose a regeneration API to ordinary mods, so slider edits
+are pending until you regenerate. The mod does not resize an existing battle
+map, change turret density, or support custom resources or overhaul mods that
+remove vanilla resource controls.
 
 ## Start developing
 
@@ -88,6 +96,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 Test
 
 # Exercise the actual vanilla Wave Defense scenario with private local servers.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 TestWaveDefense
+
+# Test real setup GUI elements using a saved Wave Defense game with a player.
+$env:WDE_GUI_SAVE = 'C:\path\to\wave-defense-save.zip'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 TestWaveDefenseGui
 ```
 
 Setup has already been completed on this computer. A separate standalone Lua
@@ -162,6 +174,14 @@ generates the native preview's 320-tile extent, since no minimap is open. At 300
 the wave checks make no test terrain requests and rely on the mod's own outer
 generation. None of these test accommodations is included in the release.
 
+The GUI suite needs a local Wave Defense save containing a player because the
+runtime cannot create players on an empty server. Set `WDE_GUI_SAVE` as shown
+above; this machine's earlier GUI-test autosave is the fallback. If neither is
+available, the suite explicitly skips. It loads the player offline, tests real
+GUI elements through a disposable adapter, and checks presets, decimal input,
+invalid edits, admin restrictions, pending changes, and native frame rebuilds.
+Mouse interaction and layout still require an interactive client check.
+
 ## Format and package
 
 ```powershell
@@ -170,7 +190,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\dev.ps1 Packag
 ```
 
 Packaging validates first, then writes
-`dist/wave-defense-enhanced_0.2.0.zip` with the required mod folder inside it.
+`dist/wave-defense-enhanced_0.3.0.zip` with the required mod folder inside it.
 Only files from `mod/` are packaged. Rebuilding replaces that version's local
 archive. Increment `mod/info.json` and add a `mod/changelog.txt` entry when
 preparing a new version.
@@ -183,13 +203,16 @@ mod/
   control.lua            Runtime events, persistent state, status command
   settings.lua           Map setting prototypes and defaults
   scripts/config.lua     Settings resolution and map-generation overrides
+  scripts/setup_gui.lua  Resource controls inside the native setup screen
   data.lua               Prototype-stage entry point
   locale/en/wave-defense-enhanced.cfg  English strings
+  locale/en/setup-gui.cfg Setup panel strings
   changelog.txt          Factorio-formatted change history
 scripts/
   dev.ps1                Setup, checks, formatting, game tests, packaging, play
   setup-editor.ps1       Compatible extensions and game-specific Lua definitions
   test-wave-defense.mjs  Real-scenario integration tests using local RCON
+  test-wave-defense-gui.mjs  Setup GUI engine tests using a local player save
 .vscode/                 Tasks, debugger configuration, extension recommendations
 ```
 
@@ -215,6 +238,13 @@ operation, which can disconnect its active difficulty table from its config.
 
 `wave_defense_enhanced.get_status` is a read-only remote interface for diagnostics.
 Future changes to the built-in scenario require rerunning the integration suite.
+
+The setup adapter recognizes the scenario-owned preview frame, preserves its
+native seed, difficulty, and Start controls, and adds a resource panel alongside
+a copy of its minimap. It reattaches after vanilla rebuilds the frame and checks
+pending settings before enabling Start. It only operates in `base/wave-defense`.
+If removing the mod from a save made on this screen, confirm the seed or click
+Shuffle once so vanilla rebuilds its original preview widgets.
 
 ## Git
 

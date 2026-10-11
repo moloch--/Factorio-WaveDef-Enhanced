@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('Setup', 'Validate', 'Format', 'Test', 'TestWaveDefense', 'Package', 'Run', 'RunWaveDefense')]
+    [ValidateSet('Setup', 'Validate', 'Format', 'Test', 'TestWaveDefense', 'TestWaveDefenseGui', 'Package', 'Run', 'RunWaveDefense')]
     [string]$Action = 'Validate',
     [string]$FactorioPath,
     [ValidateRange(1, 1000000)]
@@ -231,7 +231,7 @@ switch ($Action) {
         Ensure-Profile
         Start-Process -FilePath $script:factorioExe -ArgumentList "--config `"$configFile`" --mod-directory `"$(Join-Path $devRoot 'mods')`" --load-scenario base/wave-defense"
     }
-    'TestWaveDefense' {
+    { $_ -in @('TestWaveDefense', 'TestWaveDefenseGui') } {
         Validate-Mod
         Ensure-Profile
         $node = Get-Command node -ErrorAction SilentlyContinue
@@ -245,7 +245,8 @@ switch ($Action) {
                 if (-not $runtime) { throw 'Install Node.js 22+ or VS Code to run the scenario tests.' }
                 $env:ELECTRON_RUN_AS_NODE = '1'
             }
-            & $runtime (Join-Path $PSScriptRoot 'test-wave-defense.mjs') | Out-Host
+            $testScript = if ($Action -eq 'TestWaveDefenseGui') { 'test-wave-defense-gui.mjs' } else { 'test-wave-defense.mjs' }
+            & $runtime (Join-Path $PSScriptRoot $testScript) | Out-Host
             if ($LASTEXITCODE -ne 0) { throw 'Wave Defense integration tests failed. See .dev/wave-tests for logs.' }
         } finally { $env:ELECTRON_RUN_AS_NODE = $oldElectronMode }
     }

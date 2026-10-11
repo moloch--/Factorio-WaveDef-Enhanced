@@ -1,4 +1,14 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.3.0
+Date: 2026-10-11
+  Features:
+    - Integrate resource icons, enable switches, sliders, and percentage fields into the built-in Wave Defense setup screen.
+    - Add resource presets and starting-area controls alongside the seed and map preview.
+    - Prevent starting a round while selected settings differ from the generated preview.
+    - Share setup changes between multiplayer administrators and show read-only controls to other players.
+  Info:
+    - Confirm the native seed field with Enter to update the preview, or use Shuffle for a new seed.
+---------------------------------------------------------------------------------------------------
 Version: 0.2.0
 Date: 2026-10-11
   Features:

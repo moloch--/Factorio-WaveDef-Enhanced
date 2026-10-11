@@ -46,7 +46,7 @@ function packet(id, type, message) {
   return buffer;
 }
 
-class FactorioServer {
+export class FactorioServer {
   constructor(name, modEnabled = true, scenario = 'base/wave-defense') {
     this.directory = path.join(runRoot, name);
     this.scenario = scenario;
@@ -60,6 +60,7 @@ class FactorioServer {
     mkdirSync(path.join(this.directory, 'user-data', 'saves'), { recursive: true });
     const info = JSON.parse(readFileSync(path.join(root, 'mod', 'info.json'), 'utf8'));
     const stagedMod = path.join(this.directory, 'mods', `${info.name}_${info.version}`);
+    this.stagedMod = stagedMod;
     cpSync(path.join(root, 'mod'), stagedMod, { recursive: true });
     // Factorio only allows the owning mod/player to write runtime settings. Add
     // this narrow adapter exclusively to the disposable copy, never the release.
@@ -315,169 +316,177 @@ function assertDefenses(snapshot) {
   assert.equal(d.ammo, d.turrets * 50, 'ammunition scales with turret count');
 }
 
-const vanilla = new FactorioServer('vanilla', false);
-const enhanced = new FactorioServer('enhanced');
-const freeplay = new FactorioServer('freeplay', true, 'base/freeplay');
-try {
-  console.log(`Integration profiles: ${runRoot}`);
-  await vanilla.start();
-  const baseline = await vanilla.generate();
-  assertDefenses(baseline);
-  await vanilla.stop();
-  await enhanced.start();
-  await check('default settings reproduce vanilla terrain and starting defenses', async () => {
-    const actual = await enhanced.generate();
-    assert.deepEqual(actual, baseline);
-  });
-  await check('default starting area follows all three difficulties', async () => {
-    for (const [difficulty, expected] of [['easy', 2.25], ['normal', 1.75], ['hard', 1.5]]) {
-      const actual = await enhanced.generate({ difficulty });
-      assert.equal(actual.settings.starting_area, expected);
-      assertDefenses(actual);
-    }
-  });
-  await check('custom resource controls keep native values and unrelated map settings', async () => {
-    const values = { 'wde-resource-preset': 'custom' };
-    for (const [index, resource] of resources.entries()) {
-      values[`wde-${resource}-frequency`] = 50 + index * 25;
-      values[`wde-${resource}-size`] = 75 + index * 25;
-      values[`wde-${resource}-richness`] = 100 + index * 50;
-    }
-    await enhanced.settings(values);
-    const actual = await enhanced.generate();
-    for (const resource of resources) {
-      for (const dimension of ['frequency', 'size', 'richness']) {
-        assert.equal(actual.settings.autoplace_controls[resource][dimension], values[`wde-${resource}-${dimension}`] / 100);
+export { root, runRoot };
+
+export async function runIntegrationTests() {
+  const vanilla = new FactorioServer('vanilla', false);
+  const enhanced = new FactorioServer('enhanced');
+  const freeplay = new FactorioServer('freeplay', true, 'base/freeplay');
+  try {
+    console.log(`Integration profiles: ${runRoot}`);
+    await vanilla.start();
+    const baseline = await vanilla.generate();
+    assertDefenses(baseline);
+    await vanilla.stop();
+    await enhanced.start();
+    await check('default settings reproduce vanilla terrain and starting defenses', async () => {
+      const actual = await enhanced.generate();
+      assert.deepEqual(actual, baseline);
+    });
+    await check('default starting area follows all three difficulties', async () => {
+      for (const [difficulty, expected] of [['easy', 2.25], ['normal', 1.75], ['hard', 1.5]]) {
+        const actual = await enhanced.generate({ difficulty });
+        assert.equal(actual.settings.starting_area, expected);
+        assertDefenses(actual);
       }
-    }
-    assert.deepEqual(actual.settings.autoplace_controls['enemy-base'], baseline.settings.autoplace_controls['enemy-base']);
-    assert.deepEqual(actual.settings.autoplace_controls.trees, baseline.settings.autoplace_controls.trees);
-    assert.deepEqual(actual.settings.cliff_settings, baseline.settings.cliff_settings);
-  });
-  await check('richness changes actual ore amounts for the same seed', async () => {
-    await enhanced.settings({ 'wde-resource-preset': 'custom', 'wde-iron-ore-frequency': 100, 'wde-iron-ore-size': 200, 'wde-iron-ore-richness': 100 });
-    const low = await enhanced.generate();
-    await enhanced.settings({ 'wde-iron-ore-richness': 400 });
-    const high = await enhanced.generate();
-    assert.ok(low.ores['iron-ore'].count > 0, 'seed provides actual iron ore');
-    assert.ok(high.ores['iron-ore'].amount > low.ores['iron-ore'].amount * 3.5);
-  });
-  await check('resource enable switches suppress actual deposits with every preset', async () => {
-    for (const preset of ['wave-defense', 'freeplay', 'custom']) {
-      await enhanced.settings({ 'wde-resource-preset': preset, ...Object.fromEntries(resources.map((resource) => [`wde-${resource}-enabled`, false])) });
+    });
+    await check('custom resource controls keep native values and unrelated map settings', async () => {
+      const values = { 'wde-resource-preset': 'custom' };
+      for (const [index, resource] of resources.entries()) {
+        values[`wde-${resource}-frequency`] = 50 + index * 25;
+        values[`wde-${resource}-size`] = 75 + index * 25;
+        values[`wde-${resource}-richness`] = 100 + index * 50;
+      }
+      await enhanced.settings(values);
       const actual = await enhanced.generate();
       for (const resource of resources) {
-        assert.equal(actual.ores[resource].count, 0, `${resource} disabled under ${preset}`);
-        assert.equal(actual.settings.autoplace_controls[resource].size, 0);
-      }
-    }
-    await enhanced.settings(Object.fromEntries(resources.map((resource) => [`wde-${resource}-enabled`, true])));
-  });
-  await check('freeplay resource preset is native 100 percent for all resources', async () => {
-    await enhanced.settings({ 'wde-resource-preset': 'freeplay' });
-    const actual = await enhanced.generate();
-    for (const resource of resources) {
-      assert.deepEqual(actual.settings.autoplace_controls[resource], { frequency: 1, size: 1, richness: 1 });
-    }
-  });
-  await check('custom starting areas scale terrain-aware walls, gates, turrets and ammunition', async () => {
-    await enhanced.settings({ 'wde-starting-area-mode': 'custom', 'wde-resource-preset': 'wave-defense' });
-    for (const infinite of [false, true]) {
-      let previous;
-      for (const size of [100, 175, 300]) {
-        await enhanced.settings({ 'wde-starting-area-size': size });
-        const actual = await enhanced.generate({ infinite });
-        assert.equal(actual.settings.starting_area, size / 100);
-        assertDefenses(actual);
-        if (previous) {
-          assert.ok(actual.defenses.walls > previous.defenses.walls);
-          assert.ok(actual.defenses.turrets > previous.defenses.turrets);
+        for (const dimension of ['frequency', 'size', 'richness']) {
+          assert.equal(actual.settings.autoplace_controls[resource][dimension], values[`wde-${resource}-${dimension}`] / 100);
         }
-        previous = actual;
       }
-    }
-  });
-  await check('settings remain pending until regeneration, including during a round', async () => {
-    await enhanced.settings({ 'wde-starting-area-size': 100 });
-    const before = await enhanced.generate();
-    await enhanced.command('/c start_round()');
-    await enhanced.settings({ 'wde-starting-area-size': 225, 'wde-resource-preset': 'freeplay' });
-    assert.deepEqual(await enhanced.snapshot(), before);
-    const pending = await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")');
-    assert.equal(pending.pending, true);
-    assert.equal(pending.applied.starting_area, 1);
-    assert.equal(pending.next_options.starting_area, 2.25);
-    await enhanced.command('/c restart_round(); storage.wave_defense.surface.request_to_generate_chunks({0,0},10); storage.wave_defense.surface.force_generate_chunk_requests()');
-    const restarted = await enhanced.snapshot();
-    assert.equal(restarted.settings.starting_area, 2.25);
-    assert.equal(restarted.settings.autoplace_controls['iron-ore'].richness, 1);
-    assert.equal((await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")')).pending, false);
-    assertDefenses(restarted);
-  });
-  await check('same seed and configuration reproduce resources and defense layout', async () => {
-    const first = await enhanced.generate({ mapSeed: 123456789 });
-    const second = await enhanced.generate({ mapSeed: 123456789 });
-    assert.deepEqual(second, first);
-  });
-  await check('save/reload retains settings, surface state and regeneration behavior', async () => {
-    const before = await enhanced.snapshot();
-    const save = path.join(enhanced.directory, 'user-data', 'saves', 'wde-integration.zip');
-    await enhanced.command('/server-save wde-integration');
-    const deadline = Date.now() + 30_000;
-    while (!existsSync(save) || !enhanced.output.includes('Saving finished')) {
-      if (Date.now() > deadline) throw new Error('Integration save did not finish');
-      await delay(100);
-    }
-    await enhanced.stop('before-reload');
-    await enhanced.start(save);
-    assert.deepEqual(await enhanced.snapshot(), before);
-    const regenerated = await enhanced.generate({ mapSeed: 123456789 });
-    assert.deepEqual(regenerated, before);
-  });
-  await check('native wave spawning finds spawners at every supported base size and map type', async () => {
-    await enhanced.settings({ 'wde-starting-area-mode': 'custom', 'wde-resource-preset': 'wave-defense' });
-    // A headless server has no connected players, so native wave power is zero.
-    // Temporarily make one unit free in this disposable scenario. The stock loop
-    // exits after that purchase, exercising real spawn/path/attack code unchanged.
-    const waveEvidence = [];
-    for (const infinite of [false, true]) {
-      for (const { size, mapSeed } of [100, 175, 300].map((size) => ({ size, mapSeed: seed })).concat([{ size: 300, mapSeed: 123456789 }, { size: 300, mapSeed: 42 }])) {
-        await enhanced.settings({ 'wde-starting-area-size': size });
-        // With no rendering clients, vanilla's chart preview does not request
-        // chunks. Emulate only its stock ten-chunk preview for native-sized bases.
-        // Large bases must discover spawners using the product's requests alone.
-        await enhanced.generate({ infinite, mapSeed, forcePreview: size <= 225 });
-        const { tick: started } = await enhanced.evaluate('{tick=game.tick}');
-        await enhanced.command('/c start_round(); storage.wave_defense.difficulty.unit_prices["small-biter"]=0; game.speed=16; game.tick_paused=false');
-        let evidence;
-        const deadline = Date.now() + 45_000;
-        do {
-          await delay(100);
-          evidence = await enhanced.evaluate('{tick=game.tick,registered=table_size(storage.wave_defense.spawners),generated=storage.wave_defense.surface.count_entities_filtered{type="unit-spawner"}}');
-          if (Date.now() > deadline) throw new Error(`Wave simulation timed out: ${JSON.stringify(evidence)}`);
-        } while (evidence.tick - started < 600 || (evidence.registered === 0 && evidence.tick - started < 6000));
-        await enhanced.command('/c game.tick_paused=true; for i=1,20 do spawn_units() end; storage.wave_defense.difficulty.unit_prices["small-biter"]=25');
-        const attackers = await enhanced.evaluate('{units=#units,groups=table_size(groups),attack_groups=table_size(attack_groups),silo=storage.wave_defense.silo.valid}', 'local units=storage.wave_defense.surface.find_entities_filtered{type="unit",force="enemy"}; local groups={}; local attack_groups={}; for _,unit in pairs(units) do local group=unit.commandable.parent_group; if group then groups[group.unique_id]=true; local command=group.command; if command and command.commands and command.commands[3] and command.commands[3].target==storage.wave_defense.silo then attack_groups[group.unique_id]=true end end end;');
-        waveEvidence.push({ size, infinite, seed: mapSeed, preview_emulated: size <= 225, ...evidence, ...attackers });
-        console.log(`Wave evidence ${JSON.stringify(waveEvidence.at(-1))}`);
-        writeFileSync(path.join(runRoot, 'wave-evidence.json'), JSON.stringify(waveEvidence, null, 2));
+      assert.deepEqual(actual.settings.autoplace_controls['enemy-base'], baseline.settings.autoplace_controls['enemy-base']);
+      assert.deepEqual(actual.settings.autoplace_controls.trees, baseline.settings.autoplace_controls.trees);
+      assert.deepEqual(actual.settings.cliff_settings, baseline.settings.cliff_settings);
+    });
+    await check('richness changes actual ore amounts for the same seed', async () => {
+      await enhanced.settings({ 'wde-resource-preset': 'custom', 'wde-iron-ore-frequency': 100, 'wde-iron-ore-size': 200, 'wde-iron-ore-richness': 100 });
+      const low = await enhanced.generate();
+      await enhanced.settings({ 'wde-iron-ore-richness': 400 });
+      const high = await enhanced.generate();
+      assert.ok(low.ores['iron-ore'].count > 0, 'seed provides actual iron ore');
+      assert.ok(high.ores['iron-ore'].amount > low.ores['iron-ore'].amount * 3.5);
+    });
+    await check('resource enable switches suppress actual deposits with every preset', async () => {
+      for (const preset of ['wave-defense', 'freeplay', 'custom']) {
+        await enhanced.settings({ 'wde-resource-preset': preset, ...Object.fromEntries(resources.map((resource) => [`wde-${resource}-enabled`, false])) });
+        const actual = await enhanced.generate();
+        for (const resource of resources) {
+          assert.equal(actual.ores[resource].count, 0, `${resource} disabled under ${preset}`);
+          assert.equal(actual.settings.autoplace_controls[resource].size, 0);
+        }
       }
-    }
-    for (const evidence of waveEvidence) assert.ok(evidence.registered > 0 && evidence.units > 0 && evidence.attack_groups > 0 && evidence.silo, `Wave attackers missing: ${JSON.stringify(evidence)}`);
-  });
-  await enhanced.stop();
-  await freeplay.start();
-  await check('ordinary Freeplay and similarly named surfaces keep their generation settings', async () => {
-    const before = await freeplay.evaluate('game.surfaces.nauvis.map_gen_settings');
-    await freeplay.settings({ 'wde-resource-preset': 'freeplay', 'wde-iron-ore-enabled': false, 'wde-starting-area-mode': 'custom', 'wde-starting-area-size': 300 });
-    assert.deepEqual(await freeplay.evaluate('game.surfaces.nauvis.map_gen_settings'), before);
-    const actual = await freeplay.evaluate('s.map_gen_settings', 'local s=game.create_surface("Surface 42",{seed=123,starting_area=1.25,autoplace_controls={["iron-ore"]={frequency=2,size=3,richness=4}}});');
-    assert.equal(actual.starting_area, 1.25);
-    assert.deepEqual(actual.autoplace_controls['iron-ore'], { frequency: 2, size: 3, richness: 4 });
-  });
-  writeFileSync(path.join(runRoot, 'results.json'), JSON.stringify({ factorio, results }, null, 2));
-  console.log(`Passed ${results.length} actual-game integration checks. Logs: ${runRoot}`);
-} finally {
-  const stopped = await Promise.allSettled([vanilla, enhanced, freeplay].map((server) => server.stop()));
-  for (const result of stopped) if (result.status === 'rejected') console.error(`Cleanup failed: ${result.reason}`);
+      await enhanced.settings(Object.fromEntries(resources.map((resource) => [`wde-${resource}-enabled`, true])));
+    });
+    await check('freeplay resource preset is native 100 percent for all resources', async () => {
+      await enhanced.settings({ 'wde-resource-preset': 'freeplay' });
+      const actual = await enhanced.generate();
+      for (const resource of resources) {
+        assert.deepEqual(actual.settings.autoplace_controls[resource], { frequency: 1, size: 1, richness: 1 });
+      }
+    });
+    await check('custom starting areas scale terrain-aware walls, gates, turrets and ammunition', async () => {
+      await enhanced.settings({ 'wde-starting-area-mode': 'custom', 'wde-resource-preset': 'wave-defense' });
+      for (const infinite of [false, true]) {
+        let previous;
+        for (const size of [100, 175, 300]) {
+          await enhanced.settings({ 'wde-starting-area-size': size });
+          const actual = await enhanced.generate({ infinite });
+          assert.equal(actual.settings.starting_area, size / 100);
+          assertDefenses(actual);
+          if (previous) {
+            assert.ok(actual.defenses.walls > previous.defenses.walls);
+            assert.ok(actual.defenses.turrets > previous.defenses.turrets);
+          }
+          previous = actual;
+        }
+      }
+    });
+    await check('settings remain pending until regeneration, including during a round', async () => {
+      await enhanced.settings({ 'wde-starting-area-size': 100 });
+      const before = await enhanced.generate();
+      await enhanced.command('/c start_round()');
+      await enhanced.settings({ 'wde-starting-area-size': 225, 'wde-resource-preset': 'freeplay' });
+      assert.deepEqual(await enhanced.snapshot(), before);
+      const pending = await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")');
+      assert.equal(pending.pending, true);
+      assert.equal(pending.applied.starting_area, 1);
+      assert.equal(pending.next_options.starting_area, 2.25);
+      await enhanced.command('/c restart_round(); storage.wave_defense.surface.request_to_generate_chunks({0,0},10); storage.wave_defense.surface.force_generate_chunk_requests()');
+      const restarted = await enhanced.snapshot();
+      assert.equal(restarted.settings.starting_area, 2.25);
+      assert.equal(restarted.settings.autoplace_controls['iron-ore'].richness, 1);
+      assert.equal((await enhanced.evaluate('remote.call("wave_defense_enhanced","get_status")')).pending, false);
+      assertDefenses(restarted);
+    });
+    await check('same seed and configuration reproduce resources and defense layout', async () => {
+      const first = await enhanced.generate({ mapSeed: 123456789 });
+      const second = await enhanced.generate({ mapSeed: 123456789 });
+      assert.deepEqual(second, first);
+    });
+    await check('save/reload retains settings, surface state and regeneration behavior', async () => {
+      const before = await enhanced.snapshot();
+      const save = path.join(enhanced.directory, 'user-data', 'saves', 'wde-integration.zip');
+      await enhanced.command('/server-save wde-integration');
+      const deadline = Date.now() + 30_000;
+      while (!existsSync(save) || !enhanced.output.includes('Saving finished')) {
+        if (Date.now() > deadline) throw new Error('Integration save did not finish');
+        await delay(100);
+      }
+      await enhanced.stop('before-reload');
+      await enhanced.start(save);
+      assert.deepEqual(await enhanced.snapshot(), before);
+      const regenerated = await enhanced.generate({ mapSeed: 123456789 });
+      assert.deepEqual(regenerated, before);
+    });
+    await check('native wave spawning finds spawners at every supported base size and map type', async () => {
+      await enhanced.settings({ 'wde-starting-area-mode': 'custom', 'wde-resource-preset': 'wave-defense' });
+      // A headless server has no connected players, so native wave power is zero.
+      // Temporarily make one unit free in this disposable scenario. The stock loop
+      // exits after that purchase, exercising real spawn/path/attack code unchanged.
+      const waveEvidence = [];
+      for (const infinite of [false, true]) {
+        for (const { size, mapSeed } of [100, 175, 300].map((size) => ({ size, mapSeed: seed })).concat([{ size: 300, mapSeed: 123456789 }, { size: 300, mapSeed: 42 }])) {
+          await enhanced.settings({ 'wde-starting-area-size': size });
+          // With no rendering clients, vanilla's chart preview does not request
+          // chunks. Emulate only its stock ten-chunk preview for native-sized bases.
+          // Large bases must discover spawners using the product's requests alone.
+          await enhanced.generate({ infinite, mapSeed, forcePreview: size <= 225 });
+          const { tick: started } = await enhanced.evaluate('{tick=game.tick}');
+          await enhanced.command('/c start_round(); storage.wave_defense.difficulty.unit_prices["small-biter"]=0; game.speed=16; game.tick_paused=false');
+          let evidence;
+          const deadline = Date.now() + 45_000;
+          do {
+            await delay(100);
+            evidence = await enhanced.evaluate('{tick=game.tick,registered=table_size(storage.wave_defense.spawners),generated=storage.wave_defense.surface.count_entities_filtered{type="unit-spawner"}}');
+            if (Date.now() > deadline) throw new Error(`Wave simulation timed out: ${JSON.stringify(evidence)}`);
+          } while (evidence.tick - started < 600 || (evidence.registered === 0 && evidence.tick - started < 6000));
+          await enhanced.command('/c game.tick_paused=true; for i=1,20 do spawn_units() end; storage.wave_defense.difficulty.unit_prices["small-biter"]=25');
+          const attackers = await enhanced.evaluate('{units=#units,groups=table_size(groups),attack_groups=table_size(attack_groups),silo=storage.wave_defense.silo.valid}', 'local units=storage.wave_defense.surface.find_entities_filtered{type="unit",force="enemy"}; local groups={}; local attack_groups={}; for _,unit in pairs(units) do local group=unit.commandable.parent_group; if group then groups[group.unique_id]=true; local command=group.command; if command and command.commands and command.commands[3] and command.commands[3].target==storage.wave_defense.silo then attack_groups[group.unique_id]=true end end end;');
+          waveEvidence.push({ size, infinite, seed: mapSeed, preview_emulated: size <= 225, ...evidence, ...attackers });
+          console.log(`Wave evidence ${JSON.stringify(waveEvidence.at(-1))}`);
+          writeFileSync(path.join(runRoot, 'wave-evidence.json'), JSON.stringify(waveEvidence, null, 2));
+        }
+      }
+      for (const evidence of waveEvidence) assert.ok(evidence.registered > 0 && evidence.units > 0 && evidence.attack_groups > 0 && evidence.silo, `Wave attackers missing: ${JSON.stringify(evidence)}`);
+    });
+    await enhanced.stop();
+    await freeplay.start();
+    await check('ordinary Freeplay and similarly named surfaces keep their generation settings', async () => {
+      const before = await freeplay.evaluate('game.surfaces.nauvis.map_gen_settings');
+      await freeplay.settings({ 'wde-resource-preset': 'freeplay', 'wde-iron-ore-enabled': false, 'wde-starting-area-mode': 'custom', 'wde-starting-area-size': 300 });
+      assert.deepEqual(await freeplay.evaluate('game.surfaces.nauvis.map_gen_settings'), before);
+      const actual = await freeplay.evaluate('s.map_gen_settings', 'local s=game.create_surface("Surface 42",{seed=123,starting_area=1.25,autoplace_controls={["iron-ore"]={frequency=2,size=3,richness=4}}});');
+      assert.equal(actual.starting_area, 1.25);
+      assert.deepEqual(actual.autoplace_controls['iron-ore'], { frequency: 2, size: 3, richness: 4 });
+    });
+    writeFileSync(path.join(runRoot, 'results.json'), JSON.stringify({ factorio, results }, null, 2));
+    console.log(`Passed ${results.length} actual-game integration checks. Logs: ${runRoot}`);
+  } finally {
+    const stopped = await Promise.allSettled([vanilla, enhanced, freeplay].map((server) => server.stop()));
+    for (const result of stopped) if (result.status === 'rejected') console.error(`Cleanup failed: ${result.reason}`);
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await runIntegrationTests();
 }

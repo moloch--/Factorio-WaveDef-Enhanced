@@ -1,4 +1,5 @@
 local config = require("scripts.config")
+local setup_gui = require("scripts.setup_gui")
 
 local function state()
   return storage.wave_defense_enhanced
@@ -57,6 +58,8 @@ local function status()
     generation_count = saved and saved.generation_count or 0,
   }
 end
+
+local gui_context = { active = is_wave_defense, status = status }
 
 local function on_surface_created(event)
   if not is_wave_defense() then
@@ -119,7 +122,10 @@ script.on_init(function()
   initialize_storage()
   log("[wave-defense-enhanced] initialized")
 end)
-script.on_configuration_changed(initialize_storage)
+script.on_configuration_changed(function()
+  initialize_storage()
+  setup_gui.refresh_all(gui_context)
+end)
 script.on_event(defines.events.on_surface_created, on_surface_created)
 script.on_event(defines.events.on_surface_deleted, function(event)
   local saved = state()
@@ -129,12 +135,19 @@ script.on_event(defines.events.on_surface_deleted, function(event)
 end)
 script.on_event(defines.events.on_runtime_mod_setting_changed, function(event)
   if event.setting and event.setting:match("^wde%-") and is_wave_defense() then
-    -- A settings dialog can change many controls at once; announce the batch once.
-    state().notice_pending = true
+    -- Dialog edits get one chat notice per batch. Our sliders write settings
+    -- through Lua and already show pending changes inline in the setup panel.
+    if event.player_index then
+      state().notice_pending = true
+    end
+    setup_gui.refresh_all(gui_context)
   end
 end)
-script.on_nth_tick(60, function()
-  if state().notice_pending then
+script.on_nth_tick(30, function()
+  -- Vanilla rebuilds its unnamed preview widgets after rerolls, difficulty
+  -- changes, and display changes. Reattach to the new frame when necessary.
+  setup_gui.refresh_all(gui_context)
+  if game.tick % 60 == 0 and state().notice_pending then
     state().notice_pending = false
     if status().pending then
       game.print({ "wave-defense-enhanced.pending" })
@@ -142,6 +155,7 @@ script.on_nth_tick(60, function()
   end
 end)
 script.on_event(defines.events.on_player_joined_game, function(event)
+  setup_gui.refresh_all(gui_context)
   if not is_wave_defense() or state().notified_players[event.player_index] then
     return
   end
@@ -150,6 +164,31 @@ script.on_event(defines.events.on_player_joined_game, function(event)
     player.print({ "wave-defense-enhanced.welcome" })
     state().notified_players[event.player_index] = true
   end
+end)
+script.on_event(defines.events.on_player_removed, function(event)
+  setup_gui.remove_player(event.player_index)
+  state().notified_players[event.player_index] = nil
+end)
+script.on_event({
+  defines.events.on_player_display_resolution_changed,
+  defines.events.on_player_display_scale_changed,
+  defines.events.on_player_promoted,
+  defines.events.on_player_demoted,
+  defines.events.on_player_changed_force,
+}, function()
+  -- These native handlers rebuild Start as enabled for admins. Restore the
+  -- pending-settings guard within the same event, before another input arrives.
+  setup_gui.refresh_all(gui_context)
+end)
+script.on_event({
+  defines.events.on_gui_click,
+  defines.events.on_gui_checked_state_changed,
+  defines.events.on_gui_value_changed,
+  defines.events.on_gui_text_changed,
+  defines.events.on_gui_confirmed,
+  defines.events.on_gui_selection_state_changed,
+}, function(event)
+  setup_gui.handle_event(event, gui_context)
 end)
 commands.add_command("wde-status", { "wave-defense-enhanced.command-help" }, function(command)
   local player = command.player_index and game.get_player(command.player_index)
